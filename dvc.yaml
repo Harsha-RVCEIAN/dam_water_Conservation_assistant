@@ -1,0 +1,35 @@
+stages:
+  validate:
+    cmd: .\.venv\Scripts\python.exe -m src.data.validate
+    deps:
+      - data/raw/krs_dam_dataset.csv
+      - src/data/validate.py
+    outs:
+      - reports/data_validation_report.md:
+          cache: false
+
+  explore:
+    cmd: .\.venv\Scripts\python.exe -m src.data.explore
+    deps:
+      - data/raw/krs_dam_dataset.csv
+      - src/data/explore.py
+    outs:
+      - reports/eda_summary.md:
+          cache: false
+
+  preprocess:
+    cmd: .\.venv\Scripts\python.exe -m src.data.preprocess
+    deps:
+      - data/raw/krs_dam_dataset.csv
+      - src/data/preprocess.py
+    outs:
+      - data/processed/krs_dam_processed.csv
+
+  train:
+    cmd: .\.venv\Scripts\python.exe -m src.models.train
+    deps:
+      - data/processed/krs_dam_processed.csv
+      - src/models/train.py
+    outs:
+      - models/inflow_forecaster.joblib
+      - models/model_metadata.json

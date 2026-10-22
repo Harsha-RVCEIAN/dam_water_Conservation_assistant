@@ -1,0 +1,71 @@
+{
+  "model_type": "RandomForestRegressor",
+  "pipeline_steps": [
+    "SimpleImputer(median)",
+    "RandomForestRegressor"
+  ],
+  "target": "target_inflow_next_day_cusecs",
+  "features": [
+    "inflow_lag_1",
+    "inflow_lag_2",
+    "inflow_lag_3",
+    "inflow_lag_7",
+    "inflow_lag_14",
+    "inflow_roll_mean_7",
+    "inflow_roll_std_7",
+    "inflow_roll_mean_14",
+    "inflow_roll_mean_30",
+    "storage_lag_1",
+    "storage_lag_7",
+    "outflow_lag_1",
+    "outflow_lag_7",
+    "month",
+    "day_of_year",
+    "is_monsoon"
+  ],
+  "split": {
+    "train_range": [
+      "1990-01-02",
+      "2022-12-31"
+    ],
+    "val_range": [
+      "2023-01-01",
+      "2024-12-31"
+    ],
+    "test_range": [
+      "2025-01-01",
+      "2026-10-20"
+    ],
+    "train_samples": 12035,
+    "val_samples": 731,
+    "test_samples": 658
+  },
+  "metrics": {
+    "baseline_persistence": {
+      "mae": 2278.4,
+      "rmse": 6685.56,
+      "r2": 0.4796
+    },
+    "baseline_roll7": {
+      "mae": 2996.67,
+      "rmse": 7361.0,
+      "r2": 0.3691
+    },
+    "random_forest_val": {
+      "mae": 2134.44,
+      "rmse": 7519.89,
+      "r2": 0.6338
+    },
+    "random_forest_test": {
+      "mae": 2347.07,
+      "rmse": 5929.95,
+      "r2": 0.5906
+    },
+    "rmse_improvement_pct": 11.3
+  },
+  "mlflow": {
+    "tracking_uri": "file:./mlruns",
+    "experiment_name": "dam_inflow_forecasting",
+    "run_id": "c429b18bad4b47829e066156875c6742"
+  }
+}

@@ -1,0 +1,5 @@
+outs:
+- md5: c872f414f484096a8a577dd2064b5b02
+  size: 2089235
+  hash: md5
+  path: krs_dam_dataset.csv
