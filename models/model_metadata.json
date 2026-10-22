@@ -4,6 +4,14 @@
     "SimpleImputer(median)",
     "RandomForestRegressor"
   ],
+  "hyperparameters": {
+    "n_estimators": 100,
+    "max_depth": 10,
+    "min_samples_leaf": 4,
+    "max_features": 0.7,
+    "random_state": 42,
+    "n_jobs": -1
+  },
   "target": "target_inflow_next_day_cusecs",
   "features": [
     "inflow_lag_1",
@@ -13,6 +21,7 @@
     "inflow_lag_14",
     "inflow_roll_mean_7",
     "inflow_roll_std_7",
+    "inflow_roll_max_7",
     "inflow_roll_mean_14",
     "inflow_roll_mean_30",
     "storage_lag_1",
@@ -21,8 +30,11 @@
     "outflow_lag_7",
     "month",
     "day_of_year",
-    "is_monsoon"
+    "is_monsoon",
+    "sin_day_of_year",
+    "cos_day_of_year"
   ],
+  "feature_count": 19,
   "split": {
     "train_range": [
       "1990-01-02",
@@ -40,32 +52,163 @@
     "val_samples": 731,
     "test_samples": 658
   },
+  "uncertainty_intervals_cusecs": {
+    "residual_quantile_10": -2447.95,
+    "residual_quantile_90": 838.21,
+    "confidence_level": "80% empirical prediction interval calibrated on validation residuals"
+  },
+  "domain_boundaries": {
+    "historical_max_inflow_cusecs": 204200.0,
+    "historical_min_inflow_cusecs": 0.0,
+    "design_full_reservoir_level_ft": 2482.0,
+    "design_capacity_tmc": 49.452
+  },
   "metrics": {
-    "baseline_persistence": {
-      "mae": 2278.4,
-      "rmse": 6685.56,
-      "r2": 0.4796
+    "validation": {
+      "persistence": {
+        "mae": 2186.4,
+        "rmse": 8210.69,
+        "r2": 0.5634,
+        "wape_pct": 44.1
+      },
+      "roll7": {
+        "mae": 2738.37,
+        "rmse": 8693.52,
+        "r2": 0.5105,
+        "wape_pct": 55.23
+      },
+      "seasonal_naive": {
+        "mae": 3421.58,
+        "rmse": 11290.66,
+        "r2": 0.1744,
+        "wape_pct": 69.01
+      },
+      "selected_model": {
+        "mae": 2130.72,
+        "rmse": 7438.16,
+        "r2": 0.6417,
+        "wape_pct": 42.97
+      },
+      "rmse_improvement_pct": 9.41,
+      "mae_improvement_pct": 2.55
     },
-    "baseline_roll7": {
-      "mae": 2996.67,
-      "rmse": 7361.0,
-      "r2": 0.3691
+    "test": {
+      "persistence": {
+        "mae": 2278.4,
+        "rmse": 6685.56,
+        "r2": 0.4796,
+        "wape_pct": 44.58
+      },
+      "roll7": {
+        "mae": 2996.67,
+        "rmse": 7361.0,
+        "r2": 0.3691,
+        "wape_pct": 58.63
+      },
+      "selected_model": {
+        "mae": 2335.17,
+        "rmse": 5935.09,
+        "r2": 0.5899,
+        "wape_pct": 45.69
+      },
+      "rmse_improvement_pct": 11.23
     },
-    "random_forest_val": {
-      "mae": 2134.44,
-      "rmse": 7519.89,
-      "r2": 0.6338
+    "regimes_val": {
+      "Low Flow (<= 25th pct)": {
+        "mae": 90.42,
+        "rmse": 157.14,
+        "r2": -1.2238,
+        "wape_pct": 44.42,
+        "count": 159
+      },
+      "Normal Flow (25th-75th pct)": {
+        "mae": 834.75,
+        "rmse": 1340.07,
+        "r2": 0.1173,
+        "wape_pct": 43.98,
+        "count": 408
+      },
+      "High Flow (> 75th pct)": {
+        "mae": 7332.95,
+        "rmse": 15560.04,
+        "r2": 0.5044,
+        "wape_pct": 42.68,
+        "count": 164
+      }
     },
-    "random_forest_test": {
-      "mae": 2347.07,
-      "rmse": 5929.95,
-      "r2": 0.5906
+    "regimes_test": {
+      "Low Flow (<= 25th pct)": {
+        "mae": 385.79,
+        "rmse": 526.71,
+        "r2": -46.4099,
+        "wape_pct": 254.8,
+        "count": 231
+      },
+      "Normal Flow (25th-75th pct)": {
+        "mae": 965.94,
+        "rmse": 1542.87,
+        "r2": -0.2097,
+        "wape_pct": 49.82,
+        "count": 251
+      },
+      "High Flow (> 75th pct)": {
+        "mae": 6846.43,
+        "rmse": 11310.86,
+        "r2": 0.1465,
+        "wape_pct": 42.4,
+        "count": 176
+      }
     },
-    "rmse_improvement_pct": 11.3
+    "seasons_val": {
+      "Southwest Monsoon (Jun-Sep)": {
+        "mae": 5468.35,
+        "rmse": 12799.01,
+        "r2": 0.5804,
+        "wape_pct": 48.51,
+        "count": 244
+      },
+      "Northeast Monsoon (Oct-Nov)": {
+        "mae": 1202.81,
+        "rmse": 1861.12,
+        "r2": 0.6457,
+        "wape_pct": 25.24,
+        "count": 122
+      },
+      "Dry Season (Dec-May)": {
+        "mae": 209.69,
+        "rmse": 370.39,
+        "r2": 0.865,
+        "wape_pct": 26.17,
+        "count": 365
+      }
+    },
+    "seasons_test": {
+      "Southwest Monsoon (Jun-Sep)": {
+        "mae": 4845.74,
+        "rmse": 9207.11,
+        "r2": 0.4465,
+        "wape_pct": 45.47,
+        "count": 244
+      },
+      "Northeast Monsoon (Oct-Nov)": {
+        "mae": 2279.72,
+        "rmse": 4436.29,
+        "r2": 0.4791,
+        "wape_pct": 40.16,
+        "count": 81
+      },
+      "Dry Season (Dec-May)": {
+        "mae": 509.08,
+        "rmse": 1644.0,
+        "r2": 0.6642,
+        "wape_pct": 55.91,
+        "count": 333
+      }
+    }
   },
   "mlflow": {
     "tracking_uri": "file:./mlruns",
     "experiment_name": "dam_inflow_forecasting",
-    "run_id": "c429b18bad4b47829e066156875c6742"
+    "run_id": "88a1f0c8e2c24906b373be5e2a7dc038"
   }
 }

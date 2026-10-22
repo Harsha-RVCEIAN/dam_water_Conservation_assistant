@@ -101,6 +101,9 @@ def add_hydrological_features(df: pd.DataFrame) -> pd.DataFrame:
     df["day_of_year"] = df["calendar_date"].dt.dayofyear
     df["day_of_week"] = df["calendar_date"].dt.dayofweek
     df["is_monsoon"] = df["month"].isin([6, 7, 8, 9]).astype(int)
+    # Cyclical calendar features for seasonality
+    df["sin_day_of_year"] = np.sin(2.0 * np.pi * df["day_of_year"] / 365.25)
+    df["cos_day_of_year"] = np.cos(2.0 * np.pi * df["day_of_year"] / 365.25)
 
     return df
 

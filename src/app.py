@@ -221,26 +221,47 @@ def main() -> None:
         else:
             recent_days = 30
             recent_df = df.tail(recent_days).copy()
-            next_day_pred = forecaster.predict(df.iloc[[-1]])[0]
+            latest_features = df.iloc[[-1]]
+            
+            # Predict point and empirical 80% prediction interval
+            preds, lowers, uppers = forecaster.predict_with_interval(latest_features)
+            next_day_pred = float(preds[0])
+            next_day_lower = float(lowers[0])
+            next_day_upper = float(uppers[0])
             next_day_date = (latest_row["calendar_date"] + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
 
-            col_m1, col_m2, col_m3 = st.columns(3)
+            # Domain boundary check
+            domain_warnings = forecaster.check_input_domain(latest_features)
+            for w in domain_warnings:
+                st.warning(f"⚠️ **Domain Notice:** {w}")
+
+            c_info1, c_info2 = st.columns(2)
+            c_info1.caption(f"⏱️ **Forecast Horizon:** 1 Day Ahead &middot; Target Date: **{next_day_date}**")
+            c_info2.caption("📐 **Unit:** Cusecs (cubic feet per second, mean daily rate). 1 cusec-day = 0.0000864 TMC.")
+
+            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
             col_m1.metric(
-                label=f"Next-Day Forecast [PREDICTED] ({next_day_date})",
-                value=f"{next_day_pred:,.0f} cusecs",
-                delta=f"{next_day_pred - latest_row['inflow_cusecs']:,.0f} cusecs vs latest observed",
+                label=f"Next-Day Forecast [PREDICTED]",
+                value=f"{next_day_pred:,.0f} cfs",
+                delta=f"{next_day_pred - latest_row['inflow_cusecs']:,.0f} cfs vs today",
             )
             col_m2.metric(
-                label="Persistence Baseline Forecast",
-                value=f"{latest_row['inflow_cusecs']:,.0f} cusecs",
-                help="Simple baseline: assumption that tomorrow's inflow equals today's inflow",
+                label="80% Prediction Interval",
+                value=f"{next_day_lower:,.0f} - {next_day_upper:,.0f} cfs",
+                help="Calibrated from empirical 10th and 90th percentile residuals on chronological validation data (2023–2024)",
             )
             col_m3.metric(
-                label="7-Day Historical Moving Average",
-                value=f"{recent_df['inflow_cusecs'].tail(7).mean():,.0f} cusecs",
+                label="Persistence Baseline",
+                value=f"{latest_row['inflow_cusecs']:,.0f} cfs",
+                help="Assumes tomorrow's inflow equals today's latest observed rate",
+            )
+            col_m4.metric(
+                label="7-Day Moving Average",
+                value=f"{recent_df['inflow_cusecs'].tail(7).mean():,.0f} cfs",
+                help="Trailing 7-day average of observed inflows",
             )
 
-            # Forecast Context Plot
+            # Forecast Context Plot with uncertainty range
             fig_fc = go.Figure()
             fig_fc.add_trace(go.Scatter(
                 x=recent_df["calendar_date"],
@@ -249,27 +270,42 @@ def main() -> None:
                 mode="lines+markers",
                 line=dict(color="#1f77b4", width=2),
             ))
-            # Predicted point
+            # Predicted interval (error bar)
             fig_fc.add_trace(go.Scatter(
                 x=[pd.to_datetime(next_day_date)],
                 y=[next_day_pred],
-                name="Forecast Inflow [PREDICTED]",
+                error_y=dict(
+                    type="data",
+                    symmetric=False,
+                    array=[next_day_upper - next_day_pred],
+                    arrayminus=[next_day_pred - next_day_lower],
+                    color="#d62728",
+                    width=6,
+                    thickness=2.5,
+                ),
+                name="Forecast Inflow (80% Interval)",
                 mode="markers",
                 marker=dict(color="#d62728", size=14, symbol="star"),
             ))
             fig_fc.update_layout(
-                title=f"Recent 30 Days Observed Inflow & Next-Day Prediction ({next_day_date})",
+                title=f"Recent 30-Day Observed Inflow & Next-Day Prediction with 80% Uncertainty Band ({next_day_date})",
                 xaxis_title="Date",
-                yaxis_title="Inflow (cusecs)",
+                yaxis_title="Inflow Rate (cusecs)",
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                height=400,
+                height=420,
             )
             st.plotly_chart(fig_fc, use_container_width=True)
 
+            # Model validation performance expander
+            comp_path = Path("reports/model_comparison_report.csv")
+            if comp_path.exists():
+                with st.expander("📊 View Multi-Model Validation Benchmark (2023–2024 Held-Out Validation Period)"):
+                    st.dataframe(pd.read_csv(comp_path), use_container_width=True)
+
             st.caption(
-                "⚠️ **Forecast Caveat:** This prediction is generated solely from statistical lags and storage features. "
-                "It does not incorporate upstream radar precipitation or catchment meteorological alerts. "
-                "Never use for real-world flood warning or reservoir gate operations."
+                "⚠️ **Forecast Caveat:** This prediction is generated from historical catchment statistical lags and storage features. "
+                "It does not incorporate upstream live radar precipitation or real-time meteorological flood warnings. "
+                "This tool is an educational prototype and must never replace official Central Water Commission / dam operator safety procedures."
             )
 
     # -------------------------------------------------------------

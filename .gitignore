@@ -32,3 +32,8 @@ mlruns/
 .DS_Store
 Thumbs.db
 *.log
+
+# Documentation & Markdown files (except README)
+*.md
+!README.md
+!readme.md

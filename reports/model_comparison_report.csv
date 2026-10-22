@@ -1,0 +1,8 @@
+Model / Baseline,Split,mae,rmse,r2,wape_pct
+Persistence (t-1),Validation (2023-2024),2186.4,8210.69,0.5634,44.1
+7-Day Moving Average,Validation (2023-2024),2738.37,8693.52,0.5105,55.23
+Seasonal Naive (DOY Median),Validation (2023-2024),3421.58,11290.66,0.1744,69.01
+Ridge Regression,Validation (2023-2024),2282.55,7619.79,0.624,46.04
+Random Forest (Default),Validation (2023-2024),2122.19,7508.39,0.6349,42.8
+Random Forest (Tuned),Validation (2023-2024),2130.72,7438.16,0.6417,42.97
+HistGradientBoosting,Validation (2023-2024),2258.21,7845.55,0.6013,45.55

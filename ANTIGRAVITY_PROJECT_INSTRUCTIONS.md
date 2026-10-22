@@ -20,7 +20,7 @@ Testing & Evaluation
 Inspect the repository and `data/raw/` and `docs/`. Report the raw file
 names, file formats, dimensions, column names, data types, date range if
 applicable, and likely target variables. Read the project brief and
-reference report if present. Do not fabricate columns or measurements.
+reference report if present. Do not fabricate columns or wmeasurements.
 Do not modify raw data. Then propose the shortest implementation plan
 with no more than 5 tasks. Keep the report concise and wait for the next
 instruction.
