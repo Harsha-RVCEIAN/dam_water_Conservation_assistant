@@ -38,7 +38,6 @@ plt.rcParams.update({
 REPORTS_FIG_DIR = Path("reports/figures")
 BRAIN_FIG_DIR = Path(r"C:\Users\harsh\.gemini\antigravity-ide\brain\bb1ce316-45e9-47cf-9b75-e772b241fecb\figures")
 PROCESSED_DATA_PATH = Path("data/processed/krs_dam_processed.csv")
-RAW_DATA_PATH = Path("data/raw/krs_dam_dataset.csv")
 
 KRS_DESIGN_CAPACITY_TMC = 49.452
 KRS_FRL_FT = 2482.0
@@ -206,13 +205,9 @@ def plot_03_reservoir_elevation_storage_curve(df: pd.DataFrame) -> Path:
     """Graph 3: Elevation-Storage Bathymetric Rating Curve & Anomaly Detection."""
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5.5), dpi=300)
 
-    # Left plot: Raw vs Cleaned showing data entry anomaly
-    df_raw = pd.read_csv(RAW_DATA_PATH)
-    raw_level_col = "Reservoir Level (ft)"
-    raw_storage_col = "Gross Capacity (TMC)"
-    
-    ax1.scatter(df_raw[raw_level_col], df_raw[raw_storage_col], s=6, color="#e74c3c", alpha=0.5, label="Raw Daily Observations")
-    ax1.set_title("Raw Sensor Readings: Outlier / Typo Detection", fontsize=11, fontweight="bold")
+    # The processed dataset preserves the observed values used for this plot.
+    ax1.scatter(df["reservoir_level_ft"], df["gross_capacity_tmc"], s=6, color="#e74c3c", alpha=0.5, label="Observed Daily Readings")
+    ax1.set_title("Observed Reservoir Readings: Outlier / Typo Detection", fontsize=11, fontweight="bold")
     ax1.set_xlabel("Reservoir Level (ft MSL)")
     ax1.set_ylabel("Gross Capacity (TMC)")
     ax1.axvline(2482, color="#2980b9", linestyle="--", label="Normal Full Reservoir Level (~2,482 ft)")

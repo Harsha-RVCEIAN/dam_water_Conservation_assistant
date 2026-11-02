@@ -18,6 +18,7 @@ htmlcov/
 
 # MLflow tracking local artifacts and database
 mlruns/
+mlruns_rainfall_enhanced/
 .trash/
 
 # Environment variables & secrets
@@ -37,3 +38,9 @@ Thumbs.db
 *.md
 !README.md
 !readme.md
+
+# Large rainfall source datasets managed separately through DVC
+data/raw/rainfall/
+
+# Large intermediate rainfall candidate dataset
+data/interim/krs_rainfall_candidates.csv

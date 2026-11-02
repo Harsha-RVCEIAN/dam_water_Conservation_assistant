@@ -20,6 +20,7 @@ from src.data.validate import (
 )
 
 EDA_REPORT_PATH = Path("reports/eda_summary.md")
+PROCESSED_DATA_PATH = Path("data/processed/krs_dam_processed.csv")
 CUSEC_DAY_TO_TMC = 0.0000864
 
 
@@ -98,6 +99,7 @@ def generate_eda_markdown(stats: Dict[str, Any]) -> str:
     lines = [
         "# Exploratory Data Analysis: K.R.Sagara Dam Hydrology",
         "",
+        f"- **Analysis Input:** {stats.get('source_description', 'Provided dataframe')}",
         f"- **Dataset Period:** {stats['start_date']} to {stats['end_date']} ({stats['row_count']:,} observations)",
         "- **Basin / Reservoir:** Cauvery Basin / K.R.Sagara Dam (Karnataka, India)",
         "- **Design Gross Capacity:** 49.452 TMC",
@@ -166,8 +168,26 @@ def generate_eda_markdown(stats: Dict[str, Any]) -> str:
 def run_eda(data_path: Path = RAW_DATA_PATH) -> Path:
     """Run full EDA pipeline and output markdown report."""
     EDA_REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    df_raw = pd.read_csv(data_path)
+    source_path = data_path
+    used_processed_fallback = False
+    if not source_path.exists():
+        if data_path == RAW_DATA_PATH and PROCESSED_DATA_PATH.exists():
+            source_path = PROCESSED_DATA_PATH
+            used_processed_fallback = True
+            print(
+                f"Raw dataset not found at {data_path.resolve()}; "
+                f"using existing processed data at {source_path.resolve()} for EDA."
+            )
+        else:
+            raise FileNotFoundError(f"EDA input file not found at {source_path.resolve()}")
+
+    df_raw = pd.read_csv(source_path)
     stats = compute_eda_statistics(df_raw)
+    stats["source_description"] = (
+        f"{source_path} (read-only processed-data fallback; raw DVC data unavailable)"
+        if used_processed_fallback
+        else str(source_path)
+    )
     md = generate_eda_markdown(stats)
     EDA_REPORT_PATH.write_text(md, encoding="utf-8")
     return EDA_REPORT_PATH

@@ -8,6 +8,11 @@ An explainable, reproducible student MLOps project analyzing 36 years of histori
 
 All commands run from the project root using the project virtual environment (`.venv`):
 
+The raw dam CSV is DVC-tracked. If it is unavailable, validation and EDA use the
+existing processed dataset read-only. Preprocessing preserves the existing
+processed file instead of overwriting it. To regenerate processed data, restore
+the original raw CSV from the configured DVC source first.
+
 ```powershell
 # 1. Verify Python environment & dependencies
 .\.venv\Scripts\python.exe --version
@@ -34,6 +39,54 @@ All commands run from the project root using the project virtual environment (`.
 # 8. View MLflow experiment runs (optional)
 .\.venv\Scripts\python.exe -m mlflow ui
 ```
+
+### Rainfall experiment tracking
+
+The completed seven-model rainfall experiment can be logged without retraining:
+
+```powershell
+.\.venv\Scripts\python.exe -m src.models.log_rainfall_mlflow
+.\.venv\Scripts\python.exe -m mlflow ui --backend-store-uri .\mlruns_rainfall_enhanced
+```
+
+Its separate local MLflow tracking store is `mlruns_rainfall_enhanced/`; this
+does not reuse or replace the original trainer's `mlruns/` store.
+
+### Rainfall model comparison dashboard
+
+Launch the separate dashboard for the seven saved rainfall experiment methods:
+
+```powershell
+.\.venv\Scripts\python.exe -m streamlit run src/rainfall_dashboard.py
+```
+
+It reads the saved metrics and metadata, and loads the already-trained rainfall
+artifacts for next-day scenario forecasts; it never retrains them. The dashboard
+has overview, historical explorer, forecast studio, model performance lab,
+feature explorer, and experiment pages. Explore selectable series and rolling
+trends, filter validation/test comparisons, and inspect feature distributions.
+The forecast studio lets you change 14 dam/flow inputs and choose recorded,
+dry, typical-historical, wet-historical, or custom rainfall scenarios. Calendar
+fields and rainfall availability indicators are derived. Missing rainfall
+remains missing unless you explicitly choose a hypothetical scenario. The
+dashboard uses the project's existing Streamlit and Plotly dependencies.
+
+### Rainfall enrichment pipeline
+
+Run these commands from the project root to rebuild the approved rainfall
+candidates, daily rainfall series, and left-joined interim dataset:
+
+```powershell
+.\.venv\Scripts\python.exe src\data\filter_rainfall.py
+.\.venv\Scripts\python.exe src\data\build_rainfall_dataset.py
+.\.venv\Scripts\python.exe src\data\merge_dam_rainfall.py
+```
+
+The raw rainfall date format is `DD-MM-YYYY`; the filter writes candidate dates
+as ISO `YYYY-MM-DD`, which the daily builder parses explicitly. Missing rainfall
+observations remain missing (not zero-filled). The merge writes only to
+`data/interim/krs_dam_rainfall_merged.csv`; it does not overwrite the processed
+dam dataset or retrain the model.
 
 ---
 

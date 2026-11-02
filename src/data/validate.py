@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 
 RAW_DATA_PATH = Path("data/raw/krs_dam_dataset.csv")
+PROCESSED_DATA_PATH = Path("data/processed/krs_dam_processed.csv")
 REPORT_PATH = Path("reports/data_validation_report.md")
 
 # Standard schema definition
@@ -190,10 +191,20 @@ class ValidationReport:
 
 def run_validation(data_path: Path = RAW_DATA_PATH) -> ValidationReport:
     """Execute all validation checks on the dataset."""
-    if not data_path.exists():
-        raise FileNotFoundError(f"Raw data file not found at {data_path.resolve()}")
+    source_path = data_path
+    used_processed_fallback = False
+    if not source_path.exists():
+        if data_path == RAW_DATA_PATH and PROCESSED_DATA_PATH.exists():
+            source_path = PROCESSED_DATA_PATH
+            used_processed_fallback = True
+            print(
+                f"Raw dataset not found at {data_path.resolve()}; "
+                f"validating existing processed data at {source_path.resolve()}."
+            )
+        else:
+            raise FileNotFoundError(f"Validation input file not found at {source_path.resolve()}")
 
-    df_raw = pd.read_csv(data_path)
+    df_raw = pd.read_csv(source_path)
     raw_headers = list(df_raw.columns)
     df, col_map = normalize_dataframe_columns(df_raw)
     cleaned_headers = list(df.columns)
@@ -265,7 +276,11 @@ def run_validation(data_path: Path = RAW_DATA_PATH) -> ValidationReport:
         reset_months = sorted(list(resets["_date"].dt.month.unique()))
 
     report = ValidationReport(
-        raw_path=str(data_path),
+        raw_path=(
+            f"{source_path} (processed-data fallback; raw DVC data unavailable)"
+            if used_processed_fallback
+            else str(source_path)
+        ),
         total_rows=len(df),
         total_columns=len(df.columns),
         raw_headers=raw_headers,

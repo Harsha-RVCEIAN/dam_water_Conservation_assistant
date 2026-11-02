@@ -33,3 +33,38 @@ stages:
     outs:
       - models/inflow_forecaster.joblib
       - models/model_metadata.json
+  merge_dam_rainfall:
+    cmd: .\.venv\Scripts\python.exe src\data\merge_dam_rainfall.py
+    deps:
+    - data\processed\krs_daily_rainfall.csv
+    - data\processed\krs_dam_processed.csv
+    - src\data\merge_dam_rainfall.py
+    outs:
+    - data\interim\krs_dam_rainfall_merged.csv
+  train_rainfall_enhanced:
+    cmd: .\.venv\Scripts\python.exe -m src.models.train_rainfall
+    deps:
+    - data\interim\krs_dam_rainfall_merged.csv
+    - data\processed\krs_daily_rainfall.csv
+    - data\processed\krs_dam_processed.csv
+    - requirements.txt
+    - src\data\rainfall_features.py
+    - src\models\train.py
+    - src\models\train_rainfall.py
+    outs:
+    - models\rainfall_enhanced\rainfall_7day_moving_average_v1.joblib
+    - models\rainfall_enhanced\rainfall_7day_moving_average_v1.json
+    - models\rainfall_enhanced\rainfall_histgradientboosting_v1.joblib
+    - models\rainfall_enhanced\rainfall_histgradientboosting_v1.json
+    - models\rainfall_enhanced\rainfall_persistence_v1.joblib
+    - models\rainfall_enhanced\rainfall_persistence_v1.json
+    - models\rainfall_enhanced\rainfall_random_forest_v1.joblib
+    - models\rainfall_enhanced\rainfall_random_forest_v1.json
+    - models\rainfall_enhanced\rainfall_ridge_regression_v1.joblib
+    - models\rainfall_enhanced\rainfall_ridge_regression_v1.json
+    - models\rainfall_enhanced\rainfall_seasonal_naive_v1.joblib
+    - models\rainfall_enhanced\rainfall_seasonal_naive_v1.json
+    - models\rainfall_enhanced\rainfall_tuned_random_forest_v1.joblib
+    - models\rainfall_enhanced\rainfall_tuned_random_forest_v1.json
+    metrics:
+    - reports\rainfall_enhanced_model_metrics.csv
