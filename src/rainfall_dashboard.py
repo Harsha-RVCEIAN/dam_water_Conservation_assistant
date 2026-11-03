@@ -1,8 +1,9 @@
-"""Separate Streamlit dashboard for the rainfall-enhanced model experiment."""
+"""K.R.S. Dam water-conservation dashboard using saved rainfall-model results."""
 
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -12,18 +13,43 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from src.data.rainfall_features import RAINFALL_FEATURE_COLUMNS
+from src.data.rainfall_features import (
+    RAINFALL_DATA_PATH,
+    RAINFALL_FEATURE_COLUMNS,
+)
 from src.models.rainfall_inference import (
+    MODEL_ARTIFACT_FILES,
     MODEL_DIR,
     RainfallInferenceError,
     feature_values_for_row,
     load_forecast_data,
     load_forecast_models,
     predict_all_models,
+    eligible_prediction_issue_dates,
+    predict_for_issue_date,
+)
+from src.models.water_availability import (
+    DEFAULT_STORAGE_THRESHOLDS,
+    MAX_LIVE_STORAGE_TMC,
+    WaterAvailabilityError,
+    assess_water_alert,
+    build_conservation_recommendations,
+    calculate_storage_status,
+    derive_inflow_references,
+    summarize_rainfall,
+)
+from src.models.water_budget import (
+    KRS_DEAD_STORAGE_TMC,
+    KRS_DESIGN_GROSS_CAPACITY_TMC,
+    simulate_conservation_scenario,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 METRICS_PATH = PROJECT_ROOT / "reports/rainfall_enhanced_model_metrics.csv"
+DAM_DATA_PATH = PROJECT_ROOT / "data/processed/krs_dam_processed.csv"
+RAINFALL_SOURCE_PATH = PROJECT_ROOT / RAINFALL_DATA_PATH.relative_to(
+    PROJECT_ROOT
+)
 
 EXPECTED_MODELS = (
     "Persistence",
@@ -419,6 +445,923 @@ def _cached_forecast_data() -> tuple[pd.DataFrame, tuple[str, ...], tuple[str, .
 @st.cache_resource
 def _cached_forecast_models() -> dict[str, Any]:
     return load_forecast_models()
+
+
+@st.cache_data
+def _cached_dam_history() -> pd.DataFrame:
+    if not DAM_DATA_PATH.is_file():
+        raise DashboardDataError(f"Processed dam data not found: {DAM_DATA_PATH}")
+    try:
+        dam = pd.read_csv(DAM_DATA_PATH, parse_dates=["calendar_date"])
+    except (OSError, ValueError, pd.errors.ParserError, UnicodeError) as exc:
+        raise DashboardDataError(f"Could not read processed dam data: {exc}") from exc
+    required = {
+        "calendar_date",
+        "gross_capacity_tmc",
+        "live_above_cill_tmc",
+        "design_gross_capacity_tmc",
+        "inflow_cusecs",
+        "outflow_cusecs",
+        "withdrawal_cusecs",
+    }
+    missing = required - set(dam.columns)
+    if missing:
+        raise DashboardDataError(
+            f"Processed dam data is missing columns: {sorted(missing)}."
+        )
+    if dam["calendar_date"].isna().any() or dam["calendar_date"].duplicated().any():
+        raise DashboardDataError("Processed dam dates must be valid and unique.")
+    return dam.sort_values("calendar_date").reset_index(drop=True)
+
+
+@st.cache_data
+def _cached_daily_rainfall() -> pd.DataFrame:
+    if not RAINFALL_SOURCE_PATH.is_file():
+        raise DashboardDataError(
+            f"Processed rainfall data not found: {RAINFALL_SOURCE_PATH}"
+        )
+    try:
+        return pd.read_csv(
+            RAINFALL_SOURCE_PATH,
+            usecols=["Monitoring Date", "Rainfall_MM", "Stations_Reporting"],
+            dtype={"Monitoring Date": "string"},
+        )
+    except (OSError, ValueError, pd.errors.ParserError, UnicodeError) as exc:
+        raise DashboardDataError(
+            f"Could not read processed rainfall data: {exc}"
+        ) from exc
+
+
+def _latest_saved_forecast(
+    dam_history: pd.DataFrame,
+    model_data: pd.DataFrame,
+    feature_names: tuple[str, ...],
+    dam_features: tuple[str, ...],
+    models: dict[str, Any],
+    best_model: str,
+) -> tuple[float | None, pd.Timestamp, str | None, tuple[str, ...]]:
+    """Forecast from the latest observed dam row only; never synthesize inputs."""
+    feature_date = pd.Timestamp(dam_history["calendar_date"].iloc[-1]).normalize()
+    forecast_date = feature_date + pd.Timedelta(days=1)
+    matching = model_data.loc[
+        pd.to_datetime(model_data["calendar_date"]).dt.normalize().eq(feature_date)
+    ]
+    if len(matching) != 1:
+        return None, forecast_date, (
+            "The latest dam observation does not align to exactly one trained "
+            "feature row; no prediction was generated."
+        ), ()
+    missing_rainfall_features = tuple(
+        name
+        for name in RAINFALL_FEATURE_COLUMNS
+        if pd.isna(matching.iloc[0][name])
+    )
+    try:
+        inputs = feature_values_for_row(matching.iloc[0], feature_names)
+    except RainfallInferenceError as exc:
+        return (
+            None,
+            forecast_date,
+            f"Required prediction inputs are unavailable: {exc}",
+            missing_rainfall_features,
+        )
+    missing_dam = [name for name in dam_features if not np.isfinite(inputs[name])]
+    if missing_dam:
+        return None, forecast_date, (
+            "Dam/calendar prediction features are missing: "
+            f"{missing_dam}. No prediction was generated."
+        ), missing_rainfall_features
+    try:
+        forecasts = predict_all_models(inputs, models)
+    except RainfallInferenceError as exc:
+        return (
+            None,
+            forecast_date,
+            f"Saved model could not make a prediction: {exc}",
+            missing_rainfall_features,
+        )
+    selected = forecasts.loc[
+        forecasts["model_name"].eq(best_model), "forecast_cusecs"
+    ]
+    if len(selected) != 1 or not np.isfinite(float(selected.iloc[0])):
+        return None, forecast_date, (
+            f"The selected saved model {best_model!r} did not return a valid prediction."
+        ), missing_rainfall_features
+    return float(selected.iloc[0]), forecast_date, None, missing_rainfall_features
+
+
+def _render_conservation_overview(
+    status,
+    *,
+    predicted_inflow: float | None,
+    prediction_error: str | None,
+    missing_rainfall_features: tuple[str, ...],
+    prediction_date: pd.Timestamp,
+    selected_model: str,
+    alert,
+    rainfall_summary: dict[str, Any],
+    dam_freshness_days: int,
+) -> None:
+    st.subheader("Current available water")
+    st.caption(
+        f"Latest dam archive observation: **{status.observation_date:%Y-%m-%d}** "
+        f"({status.observation_age_days} days old as of today)."
+    )
+    if status.observation_age_days > dam_freshness_days:
+        st.warning(
+            "This is an outdated archive observation, not current reservoir telemetry. "
+            "Update dam records before using this for operational decisions."
+        )
+    columns = st.columns(4)
+    columns[0].metric("Live water above cill", f"{status.live_storage_tmc:.2f} TMC")
+    columns[1].metric("Live storage percentage", f"{status.storage_pct:.1f}%")
+    columns[2].metric(
+        "Remaining live capacity",
+        f"{status.remaining_live_storage_tmc:.2f} TMC",
+    )
+    columns[3].metric(
+        "Maximum live capacity",
+        f"{status.max_live_storage_tmc:.3f} TMC",
+    )
+    if status.is_outside_capacity:
+        st.error(
+            "Recorded live storage exceeds the derived live-capacity basis. "
+            "The value was not clipped; verify the source observation."
+        )
+    if predicted_inflow is not None:
+        next_cols = st.columns(3)
+        next_cols[0].metric(
+            f"Predicted inflow · {prediction_date:%Y-%m-%d}",
+            f"{predicted_inflow:,.0f} cusecs",
+        )
+        next_cols[1].metric("Selected saved model", selected_model)
+        alert_label = (
+            alert.level
+            if status.observation_age_days <= dam_freshness_days
+            else f"Stale-data result · {alert.level}"
+        )
+        next_cols[2].metric("Water availability alert", alert_label)
+        if missing_rainfall_features:
+            st.warning(
+                f"{len(missing_rainfall_features)} of {len(RAINFALL_FEATURE_COLUMNS)} "
+                "rainfall inputs are unavailable for this forecast date. The saved "
+                "learned-model pipeline uses its training-fitted imputer for missing "
+                "numeric values; this is not a forecast based on fresh rainfall."
+            )
+    else:
+        st.warning(
+            "Next-day inflow prediction is unavailable. The dashboard will not "
+            "substitute or fabricate missing prediction inputs. "
+            f"Details: {prediction_error or 'No prediction was returned.'}"
+        )
+    st.markdown("#### Recent storage direction")
+    trend_cols = st.columns(3)
+    for column, period, change in (
+        (trend_cols[0], "1 day", status.change_1d_tmc),
+        (trend_cols[1], "7 days", status.change_7d_tmc),
+        (trend_cols[2], "30 days", status.change_30d_tmc),
+    ):
+        column.metric(
+            f"Live storage change · {period}",
+            "Unavailable" if change is None else f"{change:+.3f} TMC",
+        )
+    latest_rainfall_date = rainfall_summary["latest_date"]
+    if latest_rainfall_date is None:
+        st.info("Rainfall observations are unavailable.")
+    else:
+        age = (pd.Timestamp(date.today()) - latest_rainfall_date).days
+        st.info(
+            f"Rainfall is historical: latest measured value was "
+            f"{rainfall_summary['latest_mm']:.2f} mm on "
+            f"{latest_rainfall_date:%Y-%m-%d} ({age} days ago)."
+        )
+
+
+def _render_water_storage_trends(dam_history: pd.DataFrame) -> None:
+    st.subheader("Water storage history")
+    data = dam_history.copy()
+    data["calendar_date"] = pd.to_datetime(data["calendar_date"])
+    years = sorted(data["calendar_date"].dt.year.unique().tolist())
+    selected_period = st.select_slider(
+        "Select storage period",
+        options=years,
+        value=(years[max(0, len(years) - 5)], years[-1]),
+        key="water_storage_year_range",
+    )
+    start_year, end_year = selected_period
+    data = data.loc[
+        data["calendar_date"].dt.year.between(start_year, end_year)
+    ].copy()
+    data["live_storage_pct"] = (
+        pd.to_numeric(data["live_above_cill_tmc"], errors="coerce")
+        / MAX_LIVE_STORAGE_TMC
+        * 100
+    )
+    display = st.radio(
+        "Storage measure",
+        ["Live water (TMC)", "Live storage (%)"],
+        horizontal=True,
+        key="water_storage_measure",
+    )
+    y_column = (
+        "live_above_cill_tmc"
+        if display == "Live water (TMC)"
+        else "live_storage_pct"
+    )
+    y_label = "Live water above cill (TMC)" if y_column == "live_above_cill_tmc" else "Live storage (%)"
+    figure = px.line(
+        data,
+        x="calendar_date",
+        y=y_column,
+        labels={"calendar_date": "Observation date", y_column: y_label},
+        title=f"Observed reservoir storage · {start_year}–{end_year}",
+    )
+    figure.update_traces(connectgaps=False, line={"color": "#45d6b2", "width": 2})
+    if y_column == "live_storage_pct":
+        figure.add_hline(
+            y=100,
+            line_dash="dash",
+            line_color="#e5a000",
+            annotation_text="Derived maximum live capacity",
+        )
+    figure.update_layout(height=450, hovermode="x unified")
+    st.plotly_chart(figure, use_container_width=True)
+    over_capacity = int(
+        pd.to_numeric(dam_history["live_above_cill_tmc"], errors="coerce")
+        .gt(MAX_LIVE_STORAGE_TMC)
+        .sum()
+    )
+    if over_capacity:
+        st.warning(
+            f"{over_capacity} historical live-above-cill values exceed the derived "
+            f"{MAX_LIVE_STORAGE_TMC:.3f} TMC maximum. They remain visible as recorded."
+        )
+    st.caption(
+        f"Percentage = live water above cill / {MAX_LIVE_STORAGE_TMC:.3f} TMC. "
+        f"The maximum is derived from {KRS_DESIGN_GROSS_CAPACITY_TMC:.3f} TMC "
+        f"design gross capacity less {KRS_DEAD_STORAGE_TMC:.3f} TMC approximate "
+        "dead storage; it is not an independently verified operating limit."
+    )
+
+
+def _render_rainfall_conditions(summary: dict[str, Any]) -> None:
+    st.subheader("Measured rainfall conditions")
+    if summary["latest_date"] is None:
+        st.error("No measured rainfall observations are available.")
+        return
+    latest_date = summary["latest_date"]
+    age = (pd.Timestamp(date.today()) - latest_date).days
+    st.caption(
+        f"Latest measured rainfall: {latest_date:%Y-%m-%d} · "
+        f"rainfall archive ends {summary['source_end_date']:%Y-%m-%d}"
+    )
+    if age > 7:
+        st.warning(
+            f"Rainfall data is {age} days old. These are historical observations, "
+            "not current rainfall conditions."
+        )
+    columns = st.columns(4)
+    columns[0].metric("Latest measured day", f"{summary['latest_mm']:.2f} mm")
+    stations = summary["latest_stations_reporting"]
+    columns[1].metric(
+        "Stations reporting",
+        "Unavailable" if stations is None else f"{stations} / 10",
+    )
+    weekly = summary["weekly"]
+    columns[2].metric(
+        "Latest complete 7-day rainfall",
+        "Unavailable"
+        if weekly["sum_mm"] is None
+        else f"{weekly['sum_mm']:.2f} mm",
+    )
+    monthly = summary["monthly"]
+    columns[3].metric(
+        "Latest complete month rainfall",
+        "Unavailable"
+        if monthly["sum_mm"] is None
+        else f"{monthly['sum_mm']:.2f} mm",
+    )
+    if weekly["sum_mm"] is not None:
+        st.caption(
+            f"7-day period: {weekly['period_start']:%Y-%m-%d} to "
+            f"{weekly['period_end']:%Y-%m-%d}."
+        )
+    else:
+        st.caption(
+            f"Latest 7-day window is incomplete: "
+            f"{weekly['days_available']}/{weekly['days_expected']} measured days."
+        )
+    if monthly["sum_mm"] is not None:
+        st.caption(f"Monthly period: {monthly['period_start']:%B %Y}.")
+    else:
+        st.caption(
+            f"Latest month is incomplete: {monthly['days_available']}/"
+            f"{monthly['days_expected']} measured days."
+        )
+    st.info(
+        "A measured 0 mm is a real zero. Missing values and incomplete periods "
+        "are unavailable, not zero."
+    )
+
+    daily = summary["daily"].copy()
+    daily["Monitoring Date"] = pd.to_datetime(daily["Monitoring Date"])
+    years = sorted(daily["Monitoring Date"].dt.year.unique().tolist())
+    year_range = st.select_slider(
+        "Rainfall trend years",
+        options=years,
+        value=(years[max(0, len(years) - 5)], years[-1]),
+        key="water_rainfall_year_range",
+    )
+    start_year, end_year = year_range
+    daily = daily.loc[
+        daily["Monitoring Date"].dt.year.between(start_year, end_year)
+    ].copy()
+    view = st.radio(
+        "Rainfall chart",
+        ["Daily rainfall", "Monthly rainfall totals"],
+        horizontal=True,
+        key="water_rainfall_chart",
+    )
+    observed_all = pd.to_numeric(summary["daily"]["Rainfall_MM"], errors="coerce").dropna()
+    low_threshold = float(observed_all.quantile(0.10))
+    heavy_threshold = float(observed_all.quantile(0.90))
+    if view == "Daily rainfall":
+        daily["Rainfall_MM"] = pd.to_numeric(daily["Rainfall_MM"], errors="coerce")
+        observed = daily.dropna(subset=["Rainfall_MM"])
+        figure = px.bar(
+            observed,
+            x="Monitoring Date",
+            y="Rainfall_MM",
+            labels={
+                "Monitoring Date": "Observation date",
+                "Rainfall_MM": "Measured rainfall (mm)",
+            },
+            title=f"Daily measured rainfall · {start_year}–{end_year}",
+        )
+        figure.add_hline(
+            y=low_threshold,
+            line_dash="dot",
+            line_color="#e5a000",
+            annotation_text=f"Archive 10th percentile · {low_threshold:.2f} mm",
+        )
+        figure.add_hline(
+            y=heavy_threshold,
+            line_dash="dash",
+            line_color="#cf5c36",
+            annotation_text=f"Archive 90th percentile · {heavy_threshold:.2f} mm",
+        )
+        figure.update_layout(height=430, hovermode="x")
+        st.plotly_chart(figure, use_container_width=True)
+        low_days = observed.loc[observed["Rainfall_MM"].le(low_threshold)]
+        heavy_days = observed.loc[observed["Rainfall_MM"].ge(heavy_threshold)]
+        summary_cols = st.columns(2)
+        summary_cols[0].metric(
+            "Low-rainfall days in selected period", f"{len(low_days):,}"
+        )
+        summary_cols[1].metric(
+            "Heavy-rainfall days in selected period", f"{len(heavy_days):,}"
+        )
+        st.caption(
+            "Low and heavy periods are descriptive archive-wide 10th/90th percentile "
+            "comparisons, not official weather alerts."
+        )
+    else:
+        monthly_history = summary["monthly_history"].copy()
+        monthly_history["month_start"] = pd.to_datetime(monthly_history["month_start"])
+        selected_months = monthly_history.loc[
+            monthly_history["month_start"].dt.year.between(start_year, end_year)
+            & monthly_history["is_complete"]
+        ]
+        if selected_months.empty:
+            st.info("No complete measured months are available for this range.")
+        else:
+            figure = px.bar(
+                selected_months,
+                x="month_start",
+                y="rainfall_sum_mm",
+                labels={
+                    "month_start": "Month",
+                    "rainfall_sum_mm": "Measured rainfall total (mm)",
+                },
+                title=f"Complete monthly rainfall · {start_year}–{end_year}",
+            )
+            figure.update_layout(height=430, hovermode="x")
+            st.plotly_chart(figure, use_container_width=True)
+        omitted = int((~monthly_history["is_complete"]).sum())
+        if omitted:
+            st.caption(
+                f"{omitted} incomplete months are omitted, not converted to zero."
+            )
+    st.markdown("#### Rainfall used for the inflow model")
+    st.write(
+        "The selected rainfall-enhanced learned model uses rainfall through the "
+        "day before its feature date: previous-day rainfall, complete 3-day and "
+        "7-day sums, station reporting/coverage, and availability indicators. "
+        f"The rainfall source ends on {summary['source_end_date']:%Y-%m-%d}; "
+        "later dates remain missing."
+    )
+
+
+def _render_water_alert_and_recommendations(
+    status,
+    alert,
+    recommendations,
+    *,
+    prediction: float | None,
+    prediction_date: pd.Timestamp,
+    prediction_error: str | None,
+    missing_rainfall_features: tuple[str, ...],
+    inflow_references: dict[str, float | None],
+    latest_inflow: float | None,
+    latest_outflow: float | None,
+    rainfall_summary: dict[str, Any],
+    dam_freshness_days: int,
+    rainfall_freshness_days: int,
+) -> None:
+    st.subheader("Water availability alert")
+    if status.observation_age_days > dam_freshness_days:
+        st.warning(
+            f"### {alert.level} — historical result; reservoir data is stale"
+        )
+    elif alert.level == "Critical Warning":
+        st.error(f"### {alert.level}")
+    elif alert.level in {"Low Storage Warning", "Moderate Warning"}:
+        st.warning(f"### {alert.level}")
+    elif alert.level == "Insufficient data":
+        st.error(f"### {alert.level}")
+    else:
+        st.success(f"### {alert.level} — no configured storage warning triggered")
+    st.caption(
+        "Alert levels use configurable provisional thresholds; no verified official "
+        "KRS shortage thresholds or allocation rules were found in this project."
+    )
+    for reason in alert.reasons:
+        st.write(f"- {reason}")
+    with st.expander("Alert evidence and dates"):
+        for value in alert.triggered_values:
+            st.write(f"- {value}")
+        st.write(
+            f"- Latest dam observation: {status.observation_date:%Y-%m-%d} "
+            f"({status.observation_age_days} days old)."
+        )
+    st.caption(
+        f"Configured storage thresholds: moderate ≤ "
+        f"{alert.provisional_thresholds['moderate_pct']:.0f}%, low ≤ "
+        f"{alert.provisional_thresholds['low_pct']:.0f}%, critical ≤ "
+        f"{alert.provisional_thresholds['critical_pct']:.0f}%. "
+        f"Freshness settings: dam {dam_freshness_days} days, rainfall "
+        f"{rainfall_freshness_days} days."
+    )
+    st.markdown("#### A. Water Conservation Actions")
+    actions = [
+        item
+        for item in recommendations
+        if item.priority not in {"Data freshness", "Data availability"}
+    ]
+    if not actions:
+        st.info(
+            "Reservoir conditions are relatively stable. Continue efficient water "
+            "management and regular monitoring."
+        )
+    for item in actions:
+        with st.container(border=True):
+            st.markdown(f"**{item.category}** · **Priority: {item.priority}**")
+            st.markdown(f"### {item.title}")
+            st.markdown("**Recommended action:**")
+            st.markdown(item.action)
+            st.markdown(f"**Why this was generated:** {item.reason}")
+            st.caption(f"**Evidence:** {item.supporting_values}")
+
+    st.markdown("#### B. Inflow Prediction Insights")
+    if prediction is None:
+        st.warning(
+            "Predicted inflow is unavailable; prediction-based planning insights "
+            "cannot be generated."
+        )
+        if prediction_error:
+            st.caption(prediction_error)
+    else:
+        insights = st.columns(4)
+        insights[0].metric(
+            f"Predicted inflow · {prediction_date:%Y-%m-%d}",
+            f"{prediction:,.0f} cusecs",
+        )
+        insights[1].metric(
+            "Historical inflow P25",
+            "Unavailable"
+            if inflow_references["low"] is None
+            else f"{inflow_references['low']:,.0f} cusecs",
+        )
+        insights[2].metric(
+            "Historical inflow P75",
+            "Unavailable"
+            if inflow_references["high"] is None
+            else f"{inflow_references['high']:,.0f} cusecs",
+        )
+        if (
+            inflow_references["low"] is None
+            or inflow_references["high"] is None
+        ):
+            st.info("Relative historical inflow classification is unavailable.")
+        elif prediction < inflow_references["low"]:
+            st.info(
+                "The estimate is relatively low compared with training-period "
+                "inflow history; consider it a planning signal, not a shortage forecast."
+            )
+        elif prediction >= inflow_references["high"]:
+            st.info(
+                "The estimate is relatively high compared with training-period "
+                "inflow history; confirm it with measured inflow before revising plans."
+            )
+        else:
+            st.info(
+                "The estimate is within the historical 25th–75th percentile range; "
+                "compare it with the next measured observation."
+            )
+        insights[3].metric(
+            "Latest recorded inflow",
+            "Unavailable" if latest_inflow is None else f"{latest_inflow:,.0f} cusecs",
+        )
+        st.caption(
+            f"Latest observed outflow: "
+            f"{'Unavailable' if latest_outflow is None else f'{latest_outflow:,.0f} cusecs'} "
+            f"on {status.observation_date:%Y-%m-%d}. Predicted values are estimates; "
+            "recorded inflow/outflow are measurements."
+        )
+        rainfall_date = rainfall_summary["latest_date"]
+        if rainfall_date is None:
+            st.caption("Rainfall availability: no measured rainfall records.")
+        else:
+            rainfall_age = (
+                pd.Timestamp(date.today()) - pd.Timestamp(rainfall_date)
+            ).days
+            st.caption(
+                f"Rainfall availability: latest measurement "
+                f"{rainfall_summary['latest_mm']:.2f} mm on "
+                f"{pd.Timestamp(rainfall_date):%Y-%m-%d} "
+                f"({rainfall_age} days old; "
+                f"{'recent context' if rainfall_age <= rainfall_freshness_days else 'stale, not current'})."
+            )
+        if missing_rainfall_features:
+            st.caption(
+                f"The current prediction used the saved fitted imputer for "
+                f"{len(missing_rainfall_features)} missing rainfall features."
+            )
+        st.caption(
+            "Historical percentiles are relative training-period references, not "
+            "official dam operating limits. Rainfall and inflow are not assumed to "
+            "have a direct causal relationship."
+        )
+
+    st.markdown("#### C. Data Reliability Warnings")
+    reliability_warnings = [
+        item
+        for item in recommendations
+        if item.priority in {"Data freshness", "Data availability"}
+    ]
+    warning_count = 0
+    for item in reliability_warnings:
+        warning_count += 1
+        st.markdown(
+            f"- **{item.title}:** {item.reason} Supporting data: "
+            f"{item.supporting_values} **Action:** {item.action}"
+        )
+    if prediction_error:
+        warning_count += 1
+        st.warning(f"Prediction limitation: {prediction_error}")
+    if missing_rainfall_features:
+        warning_count += 1
+        st.warning(
+            f"{len(missing_rainfall_features)} rainfall model inputs are unavailable "
+            "for the latest issue date; the fitted preprocessing pipeline imputed "
+            "them. No rainfall values were fabricated."
+        )
+    if warning_count == 0:
+        st.info("No data reliability warnings are currently triggered.")
+    st.warning(
+        "Recommendations are advisory only. They do not control gates, releases, "
+        "or allocations and never override official operating procedures."
+    )
+
+
+def _render_conservation_scenario(latest: pd.Series) -> None:
+    st.subheader("Hypothetical conservation scenario")
+    st.caption(
+        "Simplified scenario only. This does not recommend an actual release or "
+        "withdrawal and must not replace approved dam operations."
+    )
+    labels = {
+        "Gross storage": pd.to_numeric(latest.get("gross_capacity_tmc"), errors="coerce"),
+        "Inflow": pd.to_numeric(latest.get("inflow_cusecs"), errors="coerce"),
+        "Outflow": pd.to_numeric(latest.get("outflow_cusecs"), errors="coerce"),
+        "Withdrawal": pd.to_numeric(latest.get("withdrawal_cusecs"), errors="coerce"),
+        "Evaporation": pd.to_numeric(latest.get("evaporation_cusecs"), errors="coerce"),
+    }
+    missing = [label for label, value in labels.items() if pd.isna(value)]
+    invalid = [label for label, value in labels.items() if pd.notna(value) and value < 0]
+    if missing or invalid:
+        st.warning(
+            "Scenario defaults are incomplete or invalid; no values are fabricated. "
+            f"Missing: {missing or 'none'}; invalid: {invalid or 'none'}."
+        )
+        return
+    if labels["Gross storage"] > KRS_DESIGN_GROSS_CAPACITY_TMC:
+        st.warning(
+            "Recorded gross storage exceeds design gross capacity. Verify the record "
+            "before using the scenario calculator."
+        )
+        return
+    left, right = st.columns(2)
+    with left:
+        days = st.slider("Scenario horizon (days)", 1, 30, 7, key="water_scenario_days")
+        reduction = st.slider(
+            "Hypothetical canal withdrawal reduction (%)",
+            0,
+            50,
+            15,
+            step=5,
+            key="water_scenario_reduction",
+        )
+        start_storage = st.number_input(
+            "Starting gross storage (TMC)",
+            min_value=0.0,
+            max_value=KRS_DESIGN_GROSS_CAPACITY_TMC,
+            value=float(labels["Gross storage"]),
+            step=0.1,
+            key="water_scenario_storage",
+        )
+    with right:
+        assumed_inflow = st.number_input(
+            "Assumed inflow (cusecs)",
+            min_value=0.0,
+            value=float(labels["Inflow"]),
+            step=100.0,
+            key="water_scenario_inflow",
+        )
+        assumed_outflow = st.number_input(
+            "Assumed river outflow (cusecs)",
+            min_value=0.0,
+            value=float(labels["Outflow"]),
+            step=100.0,
+            key="water_scenario_outflow",
+        )
+        assumed_withdrawal = st.number_input(
+            "Assumed canal withdrawal (cusecs)",
+            min_value=0.0,
+            value=float(labels["Withdrawal"]),
+            step=100.0,
+            key="water_scenario_withdrawal",
+        )
+        assumed_evaporation = st.number_input(
+            "Assumed evaporation (cusecs)",
+            min_value=0.0,
+            value=float(labels["Evaporation"]),
+            step=10.0,
+            key="water_scenario_evaporation",
+        )
+    result = simulate_conservation_scenario(
+        current_storage_tmc=float(start_storage),
+        assumed_inflow_cusecs=float(assumed_inflow),
+        planned_outflow_cusecs=float(assumed_outflow),
+        baseline_withdrawal_cusecs=float(assumed_withdrawal),
+        reduction_percentage=float(reduction),
+        simulation_days=int(days),
+        evaporation_cusecs=float(assumed_evaporation),
+        design_capacity_tmc=KRS_DESIGN_GROSS_CAPACITY_TMC,
+    )
+    output = st.columns(3)
+    output[0].metric("Hypothetical water saved", f"{result.water_saved_tmc:.4f} TMC")
+    output[1].metric(
+        "Baseline ending gross storage",
+        f"{result.projected_baseline_storage_tmc:.2f} TMC",
+    )
+    output[2].metric(
+        "Scenario ending gross storage",
+        f"{result.projected_scenario_storage_tmc:.2f} TMC",
+    )
+    st.info(result.disclaimer)
+
+
+def _render_forecast_and_model(
+    *,
+    model_data: pd.DataFrame,
+    dam_history: pd.DataFrame,
+    feature_names: tuple[str, ...],
+    dam_features: tuple[str, ...],
+    models: dict[str, Any],
+    selected_model: str,
+    metrics: pd.DataFrame,
+    metadata: dict[str, dict[str, Any]],
+) -> None:
+    st.subheader("Date-selectable next-day inflow prediction")
+    try:
+        eligible_dates = eligible_prediction_issue_dates(
+            model_data,
+            dam_history,
+            dam_features,
+        )
+    except RainfallInferenceError as exc:
+        st.error(f"Cannot offer prediction dates: {exc}")
+        return
+    issue_date = st.date_input(
+        "Prediction issue date (observations available through this date)",
+        value=eligible_dates[-1].date(),
+        min_value=eligible_dates[0].date(),
+        max_value=eligible_dates[-1].date(),
+        key="next_day_prediction_issue_date",
+        help=(
+            "The selected date is the feature cutoff. The forecast target is the "
+            "following calendar day. Dates with unavailable required dam lag "
+            "features are rejected rather than replaced."
+        ),
+    )
+    st.caption(
+        f"Eligible issue-date range: {eligible_dates[0]:%Y-%m-%d} to "
+        f"{eligible_dates[-1]:%Y-%m-%d}; dates must also exist in the dam archive "
+        "and have complete required dam/calendar model inputs."
+    )
+    try:
+        selected_forecast = predict_for_issue_date(
+            issue_date,
+            model_data=model_data,
+            dam_history=dam_history,
+            feature_names=feature_names,
+            dam_features=dam_features,
+            models=models,
+            model_name=selected_model,
+        )
+    except RainfallInferenceError as exc:
+        st.error(f"No prediction was generated for the selected date: {exc}")
+    else:
+        selected_reference_end = min(
+            selected_forecast.issue_date,
+            pd.Timestamp(
+                metadata[selected_model]["requested_date_ranges"]["train"]["end"]
+            ),
+        ).strftime("%Y-%m-%d")
+        selected_inflow_references = derive_inflow_references(
+            dam_history,
+            train_end=selected_reference_end,
+        )
+        st.write(f"**Selected issue date:** {selected_forecast.issue_date:%Y-%m-%d}")
+        st.write(f"**Prediction target date:** {selected_forecast.target_date:%Y-%m-%d}")
+        columns = st.columns(3)
+        columns[0].metric(
+            "Predicted next-day inflow",
+            f"{selected_forecast.predicted_inflow_cusecs:,.0f} cusecs",
+        )
+        columns[1].metric(
+            "Actual target-day inflow",
+            "Unavailable"
+            if selected_forecast.actual_inflow_cusecs is None
+            else f"{selected_forecast.actual_inflow_cusecs:,.0f} cusecs",
+        )
+        columns[2].metric(
+            "Prediction error (predicted − actual)",
+            "Unavailable"
+            if selected_forecast.signed_error_cusecs is None
+            else f"{selected_forecast.signed_error_cusecs:+,.0f} cusecs",
+        )
+        if selected_forecast.actual_inflow_cusecs is None:
+            st.info(
+                "No measured inflow observation is available for the target date; "
+                "actual inflow and prediction error are not shown."
+            )
+        else:
+            st.caption(
+                "Actual inflow is the measured observation on the target date. "
+                "It is displayed only for comparison and is never passed into "
+                "the selected issue-date prediction."
+            )
+
+        if selected_forecast.missing_rainfall_features:
+            st.warning(
+                f"Rainfall is unavailable for this issue date: "
+                f"{len(selected_forecast.missing_rainfall_features)} of "
+                f"{len(RAINFALL_FEATURE_COLUMNS)} engineered rainfall inputs are "
+                "missing. The saved Tuned Random Forest pipeline's fitted training "
+                "imputer handled those missing inputs; rainfall was not replaced by zero."
+            )
+        else:
+            st.success(
+                "All engineered rainfall inputs required for this prediction are "
+                "available from observations before or on the issue date."
+            )
+
+        selected_low_reference = selected_inflow_references["low"]
+        selected_high_reference = selected_inflow_references["high"]
+        if selected_low_reference is None or selected_high_reference is None:
+            st.info(
+                "Historical inflow comparison is unavailable because issue-date "
+                "quartile references could not be calculated."
+            )
+        elif selected_forecast.predicted_inflow_cusecs < selected_low_reference:
+            st.info(
+                f"Relative inflow level: low — below the issue-date historical "
+                f"25th percentile ({selected_low_reference:,.0f} cusecs). This is a "
+                "comparison reference, not an operating limit."
+            )
+        elif selected_forecast.predicted_inflow_cusecs >= selected_high_reference:
+            st.info(
+                f"Relative inflow level: high — at or above the issue-date "
+                f"historical 75th percentile ({selected_high_reference:,.0f} "
+                "cusecs). This is a comparison reference, not an operating limit."
+            )
+        else:
+            st.info(
+                f"Relative inflow level: within the issue-date historical "
+                f"25th–75th percentile range ({selected_low_reference:,.0f}–"
+                f"{selected_high_reference:,.0f} "
+                "cusecs); these are comparison references, not operating limits."
+            )
+
+        with st.expander("Prediction inputs used"):
+            input_rows = []
+            rainfall_names = set(RAINFALL_FEATURE_COLUMNS)
+            for name in feature_names:
+                value = selected_forecast.feature_values[name]
+                input_rows.append(
+                    {
+                        "Feature": name,
+                        "Value": (
+                            "Unavailable — fitted training imputer used"
+                            if name in rainfall_names and not np.isfinite(value)
+                            else float(value)
+                        ),
+                        "Input type": (
+                            "Rainfall"
+                            if name in rainfall_names
+                            else "Dam/calendar"
+                        ),
+                    }
+                )
+            st.dataframe(pd.DataFrame(input_rows), hide_index=True, use_container_width=True)
+        st.caption(
+            f"Model: **{selected_model}** · issue-date features are cutoff-safe "
+            "and the target date is exactly one calendar day later."
+        )
+    st.caption(
+        "Prediction uses the existing saved Tuned Random Forest artifact; no model "
+        "is retrained. Validation and test metrics are kept in the technical appendix."
+    )
+    with st.expander("Technical appendix: seven-model evaluation"):
+        st.info(
+            "Validation results support model development. Test results are the "
+            "final held-out evaluation and are not used to tune this prediction."
+        )
+        st.markdown("#### Validation and held-out test results")
+        report = metrics.pivot(index="model_name", columns="split")
+        report.columns = report.columns.swaplevel(0, 1)
+        report = report.reindex(EXPECTED_MODELS)
+        columns = [
+            ("validation", "mae"),
+            ("validation", "rmse"),
+            ("validation", "r2"),
+            ("validation", "sample_count"),
+            ("test", "mae"),
+            ("test", "rmse"),
+            ("test", "r2"),
+            ("test", "sample_count"),
+        ]
+        report = report.loc[:, columns]
+        report.columns = [
+            "Validation MAE (cusecs)",
+            "Validation RMSE (cusecs)",
+            "Validation R²",
+            "Validation samples",
+            "Test MAE (cusecs)",
+            "Test RMSE (cusecs)",
+            "Test R²",
+            "Test samples",
+        ]
+        st.dataframe(report, use_container_width=True)
+        test_start, test_end = _common_test_period(metadata)
+        st.caption(
+            f"Held-out test period: {test_start} to {test_end}. "
+            f"Metrics source: `{METRICS_PATH.relative_to(PROJECT_ROOT)}`."
+        )
+        st.markdown("#### Forecasting methods")
+        methods = metrics.loc[metrics["split"].eq("test")].set_index("model_name")
+        for model_name in EXPECTED_MODELS:
+            row = methods.loc[model_name]
+            rainfall_used = bool(row["rainfall_features_used"])
+            description = (
+                f"**{model_name}** · {row['algorithm']} · "
+                f"{'learned model; 27 inputs include rainfall features' if rainfall_used else 'rule-based; original formula retained and rainfall is not used'}"
+            )
+            st.markdown(description)
+        st.caption(
+            "MAE is average absolute prediction error in cusecs. RMSE also uses "
+            "cusecs and penalizes large errors more strongly. R² compares explained "
+            "target variation with a mean-prediction baseline; it is not prediction "
+            "accuracy or a percentage of correct predictions."
+        )
+        st.caption(
+            f"Saved artifact: "
+            f"`{(MODEL_DIR / MODEL_ARTIFACT_FILES[selected_model]).relative_to(PROJECT_ROOT)}`. "
+            "The three rule-based methods retain their original formulas and do "
+            "not learn rainfall effects."
+        )
 
 
 def _inject_dashboard_theme() -> None:
@@ -1351,8 +2294,8 @@ def _render_experiment_details(
 
 def main() -> None:
     st.set_page_config(
-        page_title="KRS Rainfall Forecast Studio",
-        page_icon="🌦️",
+        page_title="KRS Water Conservation Assistant",
+        page_icon="💧",
         layout="wide",
         initial_sidebar_state="expanded",
     )
@@ -1361,37 +2304,70 @@ def main() -> None:
         metrics = load_metrics()
         metadata = load_model_metadata()
         validate_metrics_metadata(metrics, metadata)
-        comparison, best_model = prepare_comparison(metrics)
-        data, feature_names, dam_features = _cached_forecast_data()
-        models = _cached_forecast_models()
+        recommendation_model = "Tuned Random Forest"
     except (DashboardDataError, RainfallInferenceError) as exc:
-        st.error(f"Could not load the rainfall experiment dashboard: {exc}")
+        st.error(f"Could not load saved rainfall-model results: {exc}")
         st.stop()
 
-    test_start, test_end = _common_test_period(metadata)
-    st.markdown(
-        "<div class='rain-hero'>"
-        "<div class='rain-eyebrow'>K.R.S. Dam · Student MLOps Project</div>"
-        "<h1>Rainfall Forecast Studio</h1>"
-        "<p>Explore reservoir history, test rainfall scenarios, and compare "
-        "seven next-day inflow forecasting methods.</p>"
-        "</div>",
-        unsafe_allow_html=True,
-    )
-    st.caption(
-        f"Target: next-day inflow in cusecs · Held-out test: {test_start} to "
-        f"{test_end} · Dataset: `{metadata[EXPECTED_MODELS[0]]['dataset_path']}`"
-    )
+    try:
+        dam_history = _cached_dam_history()
+        status = calculate_storage_status(dam_history, as_of=date.today())
+    except (DashboardDataError, WaterAvailabilityError) as exc:
+        st.error(f"Could not calculate reservoir status: {exc}")
+        st.stop()
+
+    rainfall_error = None
+    try:
+        rainfall_summary = summarize_rainfall(_cached_daily_rainfall())
+    except (DashboardDataError, WaterAvailabilityError) as exc:
+        rainfall_error = str(exc)
+        rainfall_summary = summarize_rainfall(
+            pd.DataFrame(
+                columns=[
+                    "Monitoring Date",
+                    "Rainfall_MM",
+                    "Stations_Reporting",
+                ]
+            )
+        )
+
+    forecast_error = None
+    prediction = None
+    missing_rainfall_features: tuple[str, ...] = ()
+    latest_observed = pd.Timestamp(dam_history["calendar_date"].iloc[-1]).normalize()
+    prediction_date = latest_observed + pd.Timedelta(days=1)
+    forecast_data = None
+    forecast_models = None
+    try:
+        forecast_data, feature_names, dam_features = _cached_forecast_data()
+        forecast_models = _cached_forecast_models()
+        (
+            prediction,
+            prediction_date,
+            forecast_error,
+            missing_rainfall_features,
+        ) = _latest_saved_forecast(
+            dam_history,
+            forecast_data,
+            feature_names,
+            dam_features,
+            forecast_models,
+            recommendation_model,
+        )
+    except RainfallInferenceError as exc:
+        forecast_error = str(exc)
+
+    thresholds = dict(DEFAULT_STORAGE_THRESHOLDS)
+    st.sidebar.markdown("## K.R.S. Water Assistant")
+    st.sidebar.caption("Historical records · no live telemetry")
     pages = {
-        "Reservoir overview": "overview",
-        "Historical explorer": "history",
-        "Forecast studio": "forecast",
-        "Model performance lab": "comparison",
-        "Feature explorer": "features",
-        "Experiment details": "experiment",
+        "Water availability": "overview",
+        "Next-day inflow": "forecast",
+        "Reservoir history": "storage",
+        "Rainfall analysis": "rainfall",
+        "Alerts & recommendations": "alerts",
+        "Conservation scenario": "scenario",
     }
-    st.sidebar.markdown("## 🌦️ Forecast Studio")
-    st.sidebar.caption("K.R.S. Dam · rainfall-enhanced experiment")
     selected_page = st.sidebar.radio(
         "Navigate",
         list(pages),
@@ -1399,40 +2375,195 @@ def main() -> None:
         key="rain_dashboard_navigation",
     )
     st.sidebar.divider()
-    st.sidebar.markdown("### Experiment snapshot")
-    st.sidebar.metric("Methods", len(EXPECTED_MODELS))
-    st.sidebar.metric("Learned inputs", metadata["Ridge Regression"]["feature_count"])
-    st.sidebar.caption(f"Test cohort · {test_start} → {test_end}")
-    st.sidebar.caption("Historical archive only · no live telemetry")
+    st.sidebar.markdown("### Provisional alert controls")
+    thresholds["moderate_pct"] = float(
+        st.sidebar.slider(
+            "Moderate watch threshold (%)",
+            min_value=20,
+            max_value=80,
+            value=int(DEFAULT_STORAGE_THRESHOLDS["moderate_pct"]),
+            step=5,
+            key="water_moderate_threshold",
+        )
+    )
+    thresholds["low_pct"] = float(
+        st.sidebar.slider(
+            "Low storage threshold (%)",
+            min_value=10,
+            max_value=int(thresholds["moderate_pct"] - 5),
+            value=int(min(DEFAULT_STORAGE_THRESHOLDS["low_pct"], thresholds["moderate_pct"] - 5)),
+            step=5,
+            key="water_low_threshold",
+        )
+    )
+    thresholds["critical_pct"] = float(
+        st.sidebar.slider(
+            "Critical threshold (%)",
+            min_value=0,
+            max_value=int(thresholds["low_pct"] - 5),
+            value=int(min(DEFAULT_STORAGE_THRESHOLDS["critical_pct"], thresholds["low_pct"] - 5)),
+            step=5,
+            key="water_critical_threshold",
+        )
+    )
+    dam_freshness_days = st.sidebar.slider(
+        "Dam-data freshness (days)",
+        min_value=1,
+        max_value=30,
+        value=3,
+        key="water_dam_freshness",
+    )
+    rainfall_freshness_days = st.sidebar.slider(
+        "Rainfall-data freshness (days)",
+        min_value=1,
+        max_value=30,
+        value=7,
+        key="water_rainfall_freshness",
+    )
 
+    inflow_references = derive_inflow_references(
+        forecast_data if forecast_data is not None else dam_history
+    )
+    low_inflow_reference = inflow_references["low"]
+    high_inflow_reference = inflow_references["high"]
+    latest_dam_row = dam_history.iloc[-1]
+    latest_outflow_value = pd.to_numeric(
+        latest_dam_row.get("outflow_cusecs"), errors="coerce"
+    )
+    latest_outflow = (
+        float(latest_outflow_value)
+        if pd.notna(latest_outflow_value) and latest_outflow_value >= 0
+        else None
+    )
+    latest_inflow_value = pd.to_numeric(
+        latest_dam_row.get("inflow_cusecs"), errors="coerce"
+    )
+    latest_inflow = (
+        float(latest_inflow_value)
+        if pd.notna(latest_inflow_value) and latest_inflow_value >= 0
+        else None
+    )
+    rainfall_reference = None
+    heavy_rainfall_reference = None
+    if not rainfall_summary["daily"].empty:
+        measured_rainfall = pd.to_numeric(
+            rainfall_summary["daily"]["Rainfall_MM"], errors="coerce"
+        ).dropna()
+        if not measured_rainfall.empty:
+            rainfall_reference = float(measured_rainfall.quantile(0.10))
+            heavy_rainfall_reference = float(measured_rainfall.quantile(0.90))
+    try:
+        alert = assess_water_alert(
+            status,
+            predicted_inflow_cusecs=prediction,
+            prediction_date=prediction_date,
+            low_inflow_reference_cusecs=low_inflow_reference,
+            thresholds=thresholds,
+        )
+        recommendations = build_conservation_recommendations(
+            status,
+            alert,
+            predicted_inflow_cusecs=prediction,
+            prediction_date=prediction_date,
+            low_inflow_reference_cusecs=low_inflow_reference,
+            high_inflow_reference_cusecs=high_inflow_reference,
+            latest_inflow_cusecs=latest_inflow,
+            latest_inflow_date=status.observation_date,
+            latest_outflow_cusecs=latest_outflow,
+            latest_outflow_date=status.observation_date,
+            latest_rainfall_date=rainfall_summary["latest_date"],
+            latest_rainfall_mm=rainfall_summary["latest_mm"],
+            low_rainfall_reference_mm=rainfall_reference,
+            high_rainfall_reference_mm=heavy_rainfall_reference,
+            reference_date=date.today(),
+            max_observation_age_days=dam_freshness_days,
+            max_rainfall_age_days=rainfall_freshness_days,
+        )
+    except WaterAvailabilityError as exc:
+        st.error(f"Could not assess water availability: {exc}")
+        st.stop()
+
+    test_start, test_end = _common_test_period(metadata)
+    st.markdown(
+        "<div class='rain-hero'>"
+        "<div class='rain-eyebrow'>K.R.S. Dam · Water Conservation Assistant</div>"
+        "<h1>Water availability & conservation</h1>"
+        "<p>Review recorded live storage, rainfall history, and a saved-model "
+        "next-day inflow estimate. All guidance is provisional and non-operational.</p>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        f"Latest reservoir record: {status.observation_date:%Y-%m-%d} · "
+        f"Forecast target: next-day inflow (cusecs) · Held-out test period: "
+        f"{test_start} to {test_end}."
+    )
     if pages[selected_page] == "overview":
-        _render_overview(data, test_end)
-    elif pages[selected_page] == "history":
-        _render_historical_trends(data)
+        _render_conservation_overview(
+            status,
+            predicted_inflow=prediction,
+            prediction_error=forecast_error,
+            missing_rainfall_features=missing_rainfall_features,
+            prediction_date=prediction_date,
+            selected_model=recommendation_model,
+            alert=alert,
+            rainfall_summary=rainfall_summary,
+            dam_freshness_days=dam_freshness_days,
+        )
+        if rainfall_error:
+            st.error(f"Rainfall analysis is unavailable: {rainfall_error}")
+    elif pages[selected_page] == "storage":
+        _render_water_storage_trends(dam_history)
+    elif pages[selected_page] == "rainfall":
+        if rainfall_error:
+            st.error(f"Rainfall analysis is unavailable: {rainfall_error}")
+        else:
+            _render_rainfall_conditions(rainfall_summary)
     elif pages[selected_page] == "forecast":
-        _render_forecast(
-            data,
-            feature_names,
-            dam_features,
-            models,
-            best_model,
-            test_end,
-            str(metadata[EXPECTED_MODELS[0]]["rainfall_source_end_date"]),
+        if forecast_data is None or forecast_models is None:
+            st.error(
+                "Date-selectable predictions are unavailable because required "
+                f"forecast inputs or saved models could not be loaded: "
+                f"{forecast_error or 'unknown model/data loading error'}"
+            )
+        else:
+            _render_forecast_and_model(
+                model_data=forecast_data,
+                dam_history=dam_history,
+                feature_names=feature_names,
+                dam_features=dam_features,
+                models=forecast_models,
+                selected_model=recommendation_model,
+                metrics=metrics,
+                metadata=metadata,
+            )
+        if rainfall_error:
+            st.warning(
+                f"Rainfall observations for conservation review are unavailable: "
+                f"{rainfall_error}"
+            )
+    elif pages[selected_page] == "alerts":
+        _render_water_alert_and_recommendations(
+            status,
+            alert,
+            recommendations,
+            prediction=prediction,
+            prediction_date=prediction_date,
+            prediction_error=forecast_error,
+            missing_rainfall_features=missing_rainfall_features,
+            inflow_references=inflow_references,
+            latest_inflow=latest_inflow,
+            latest_outflow=latest_outflow,
+            rainfall_summary=rainfall_summary,
+            dam_freshness_days=dam_freshness_days,
+            rainfall_freshness_days=rainfall_freshness_days,
         )
-    elif pages[selected_page] == "comparison":
-        _render_comparison(metrics, comparison, best_model)
-    elif pages[selected_page] == "features":
-        _render_feature_guide(data, feature_names)
     else:
-        _render_experiment_details(metadata, test_start, test_end)
-        st.caption(
-            f"Test metrics cover {test_start} through {test_end}. The dashboard "
-            "loads existing artifacts and does not retrain models."
-        )
+        _render_conservation_scenario(dam_history.iloc[-1])
     st.markdown("---")
     st.caption(
-        "Decision-support demonstration only · not live monitoring or operational "
-        "dam-safety advice."
+        "Advisory demonstration only · historical source data · not live monitoring, "
+        "dam-safety advice, or an instruction to operate the reservoir."
     )
 
 

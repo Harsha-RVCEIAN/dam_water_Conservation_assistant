@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -33,10 +34,71 @@ MODEL_METADATA_FILES = {
     name: Path(filename).with_suffix(".json").name
     for name, filename in MODEL_ARTIFACT_FILES.items()
 }
+LEARNED_MODEL_NAMES = (
+    "Ridge Regression",
+    "Random Forest",
+    "Tuned Random Forest",
+    "HistGradientBoosting",
+)
 
 
 class RainfallInferenceError(ValueError):
     """Raised when the saved experiment cannot produce a safe forecast."""
+
+
+@dataclass(frozen=True)
+class NextDayForecast:
+    issue_date: pd.Timestamp
+    target_date: pd.Timestamp
+    predicted_inflow_cusecs: float
+    actual_inflow_cusecs: float | None
+    signed_error_cusecs: float | None
+    feature_values: dict[str, float]
+    missing_rainfall_features: tuple[str, ...]
+
+
+
+def select_best_learned_model(metrics: pd.DataFrame) -> str:
+    """Choose the top learned model by mean rank across saved test metrics."""
+    required = {"model_name", "model_type", "split", "mae", "rmse", "r2"}
+    missing = required - set(metrics.columns)
+    if missing:
+        raise RainfallInferenceError(
+            f"Metrics are missing model-selection columns: {sorted(missing)}"
+        )
+    test = metrics.loc[
+        metrics["split"].astype(str).str.lower().eq("test")
+        & metrics["model_name"].isin(LEARNED_MODEL_NAMES)
+        & metrics["model_type"].astype(str).str.lower().eq("learned")
+    ].copy()
+    if set(test["model_name"]) != set(LEARNED_MODEL_NAMES):
+        raise RainfallInferenceError(
+            "Saved test metrics must include exactly the four learned rainfall models."
+        )
+    for column in ("mae", "rmse", "r2"):
+        test[column] = pd.to_numeric(test[column], errors="coerce")
+        if test[column].isna().any() or not np.isfinite(test[column]).all():
+            raise RainfallInferenceError(
+                f"Saved test metric '{column}' contains missing or invalid values."
+            )
+    if test.duplicated("model_name").any():
+        raise RainfallInferenceError(
+            "Saved test metrics contain duplicate learned-model rows."
+        )
+    ranks = pd.DataFrame(
+        {
+            "model_name": test["model_name"],
+            "mae": test["mae"].rank(ascending=True, method="min"),
+            "rmse": test["rmse"].rank(ascending=True, method="min"),
+            "r2": test["r2"].rank(ascending=False, method="min"),
+        }
+    )
+    ranks["mean_rank"] = ranks[["mae", "rmse", "r2"]].mean(axis=1)
+    ranked = ranks.sort_values(
+        ["mean_rank", "mae", "rmse", "model_name"],
+        ascending=[True, True, True, True],
+    )
+    return str(ranked.iloc[0]["model_name"])
 
 
 def load_forecast_data(
@@ -184,6 +246,173 @@ def feature_values_for_row(
             )
         values[name] = numeric_value
     return values
+
+
+def eligible_prediction_issue_dates(
+    model_data: pd.DataFrame,
+    dam_history: pd.DataFrame,
+    dam_features: tuple[str, ...],
+) -> tuple[pd.Timestamp, ...]:
+    """Return observed issue dates with all required dam/calendar inputs present."""
+    required_dam_columns = {"calendar_date", "inflow_cusecs"}
+    missing_dam_columns = required_dam_columns - set(dam_history.columns)
+    if missing_dam_columns:
+        raise RainfallInferenceError(
+            f"Dam history is missing required columns: {sorted(missing_dam_columns)}"
+        )
+    required_model_columns = {"calendar_date", *dam_features}
+    missing_model_columns = required_model_columns - set(model_data.columns)
+    if missing_model_columns:
+        raise RainfallInferenceError(
+            f"Forecast data is missing required columns: {sorted(missing_model_columns)}"
+        )
+    dam_dates = pd.to_datetime(dam_history["calendar_date"], errors="coerce").dt.normalize()
+    model_dates = pd.to_datetime(model_data["calendar_date"], errors="coerce").dt.normalize()
+    if dam_dates.isna().any() or dam_dates.duplicated().any():
+        raise RainfallInferenceError("Dam history dates must be valid and unique.")
+    if model_dates.isna().any() or model_dates.duplicated().any():
+        raise RainfallInferenceError("Forecast data dates must be valid and unique.")
+    observed_dates = set(dam_dates)
+    numeric_features = model_data.loc[:, list(dam_features)].apply(
+        pd.to_numeric, errors="coerce"
+    )
+    complete_features = np.isfinite(numeric_features.to_numpy(dtype=float)).all(axis=1)
+    eligible = [
+        pd.Timestamp(issue_date)
+        for issue_date, is_complete in zip(model_dates, complete_features)
+        if issue_date in observed_dates and is_complete
+    ]
+    if not eligible:
+        raise RainfallInferenceError(
+            "No issue dates have both an observed dam row and all required "
+            "dam/calendar lag features."
+        )
+    return tuple(eligible)
+
+
+def predict_for_issue_date(
+    issue_date: str | pd.Timestamp,
+    *,
+    model_data: pd.DataFrame,
+    dam_history: pd.DataFrame,
+    feature_names: tuple[str, ...],
+    dam_features: tuple[str, ...],
+    models: dict[str, Any],
+    model_name: str = "Tuned Random Forest",
+) -> NextDayForecast:
+    """Predict next-calendar-day inflow from issue-date inputs only.
+
+    Historical target observations are joined only after prediction to report an
+    actual and error; they are never passed to the model.
+    """
+    try:
+        selected_date = pd.Timestamp(issue_date).normalize()
+    except (TypeError, ValueError) as exc:
+        raise RainfallInferenceError(
+            f"Invalid prediction issue date: {issue_date!r}."
+        ) from exc
+    if pd.isna(selected_date):
+        raise RainfallInferenceError(f"Invalid prediction issue date: {issue_date!r}.")
+
+    eligible_dates = eligible_prediction_issue_dates(
+        model_data,
+        dam_history,
+        dam_features,
+    )
+    if selected_date not in eligible_dates:
+        all_dam_dates = pd.to_datetime(
+            dam_history["calendar_date"], errors="coerce"
+        ).dt.normalize()
+        if selected_date not in set(all_dam_dates):
+            raise RainfallInferenceError(
+                f"Issue date {selected_date.date()} is outside the available dam "
+                "observation dates."
+            )
+        raise RainfallInferenceError(
+            f"Issue date {selected_date.date()} does not have all required "
+            "dam/calendar lag features; choose an eligible observed date."
+        )
+
+    matching = model_data.loc[
+        pd.to_datetime(model_data["calendar_date"], errors="coerce")
+        .dt.normalize()
+        .eq(selected_date)
+    ]
+    if len(matching) != 1:
+        raise RainfallInferenceError(
+            f"Issue date {selected_date.date()} does not map to exactly one feature row."
+        )
+    row = matching.iloc[0]
+    feature_values = feature_values_for_row(row, feature_names)
+    missing_rainfall = tuple(
+        name for name in RAINFALL_FEATURE_COLUMNS if not np.isfinite(feature_values[name])
+    )
+    estimator = models.get(model_name)
+    if estimator is None or not hasattr(estimator, "predict"):
+        raise RainfallInferenceError(
+            f"Saved forecasting model is unavailable: {model_name}."
+        )
+    if missing_rainfall:
+        steps = getattr(estimator, "named_steps", None)
+        imputer = steps.get("imputer") if steps is not None else None
+        statistics = getattr(imputer, "statistics_", None)
+        if statistics is None:
+            raise RainfallInferenceError(
+                f"{model_name} has missing rainfall inputs, but no fitted imputer "
+                "is available to handle them safely."
+            )
+        statistics = np.asarray(statistics, dtype=float)
+        missing_indices = [feature_names.index(name) for name in missing_rainfall]
+        if any(
+            index >= len(statistics) or not np.isfinite(statistics[index])
+            for index in missing_indices
+        ):
+            raise RainfallInferenceError(
+                f"{model_name}'s fitted imputer has no valid training value for "
+                "one or more missing rainfall features."
+            )
+    input_frame = pd.DataFrame(
+        [[feature_values[name] for name in feature_names]],
+        columns=feature_names,
+    )
+    try:
+        prediction = float(estimator.predict(input_frame)[0])
+    except (ValueError, TypeError, KeyError) as exc:
+        raise RainfallInferenceError(
+            f"Could not generate a forecast with {model_name}: {exc}"
+        ) from exc
+    if not np.isfinite(prediction):
+        raise RainfallInferenceError(
+            f"{model_name} returned a non-finite forecast."
+        )
+    prediction = max(prediction, 0.0)
+
+    target_date = selected_date + pd.Timedelta(days=1)
+    normalized_dam_dates = pd.to_datetime(
+        dam_history["calendar_date"], errors="coerce"
+    ).dt.normalize()
+    actual_rows = dam_history.loc[normalized_dam_dates.eq(target_date), "inflow_cusecs"]
+    actual: float | None = None
+    if (
+        target_date <= pd.Timestamp.now().normalize()
+        and len(actual_rows) == 1
+        and pd.notna(actual_rows.iloc[0])
+    ):
+        actual_value = pd.to_numeric(actual_rows.iloc[0], errors="coerce")
+        if pd.notna(actual_value) and np.isfinite(actual_value):
+            actual = float(actual_value)
+
+    return NextDayForecast(
+        issue_date=selected_date,
+        target_date=target_date,
+        predicted_inflow_cusecs=prediction,
+        actual_inflow_cusecs=actual,
+        signed_error_cusecs=(
+            prediction - actual if actual is not None else None
+        ),
+        feature_values=feature_values,
+        missing_rainfall_features=missing_rainfall,
+    )
 
 
 def predict_all_models(

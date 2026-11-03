@@ -1,5 +1,7 @@
 import pandas as pd
 import pytest
+from datetime import date
+from streamlit.testing.v1 import AppTest
 
 from src.rainfall_dashboard import (
     DashboardDataError,
@@ -91,3 +93,63 @@ def test_metadata_and_metrics_must_agree():
 def test_missing_metadata_is_reported(tmp_path):
     with pytest.raises(DashboardDataError, match="Model metadata file not found"):
         load_model_metadata(tmp_path)
+
+
+def test_conservation_dashboard_pages_render_without_exceptions():
+    app = AppTest.from_file("src/rainfall_dashboard.py").run(timeout=60)
+    assert not app.exception
+    displayed_metrics = {item.label: item.value for item in app.metric}
+    assert displayed_metrics["Selected saved model"] == "Tuned Random Forest"
+
+    for page in (
+        "Next-day inflow",
+        "Reservoir history",
+        "Rainfall analysis",
+        "Alerts & recommendations",
+        "Conservation scenario",
+    ):
+        app.sidebar.radio[0].set_value(page)
+        app.run(timeout=60)
+        assert not app.exception, f"Dashboard page failed: {page}"
+
+
+def test_recommendation_page_explains_inflow_and_stale_data():
+    app = AppTest.from_file("src/rainfall_dashboard.py").run(timeout=60)
+    app.sidebar.radio[0].set_value("Alerts & recommendations")
+    app.run(timeout=60)
+
+    markdown = "\n".join(item.value for item in app.markdown)
+    captions = "\n".join(item.value for item in app.caption)
+    metric_labels = "\n".join(item.label for item in app.metric)
+    assert "Combined water conservation recommendation" in markdown
+    assert "Recommended action:" in markdown
+    assert "Why this was generated:" in markdown
+    assert "Predicted inflow" in metric_labels
+    assert "Latest recorded inflow" in metric_labels
+    assert "TMC" in captions
+    assert "Inflow Prediction Insights" in markdown
+    assert "Data Reliability Warnings" in markdown
+    assert "current operational decisions" in markdown.lower()
+    assert "Forecast target date has passed" in markdown
+
+
+def test_date_selectable_forecast_shows_target_and_historical_actual():
+    app = AppTest.from_file("src/rainfall_dashboard.py").run(timeout=60)
+    app.sidebar.radio[0].set_value("Next-day inflow")
+    app.run(timeout=60)
+    date_selector = next(
+        widget
+        for widget in app.date_input
+        if widget.label.startswith("Prediction issue date")
+    )
+    date_selector.set_value(date(2025, 12, 20))
+    app.run(timeout=60)
+
+    markdown = "\n".join(item.value for item in app.markdown)
+    metric_values = {item.label: item.value for item in app.metric}
+    assert not app.exception
+    assert "2025-12-20" in markdown
+    assert "2025-12-21" in markdown
+    assert metric_values["Predicted next-day inflow"].endswith("cusecs")
+    assert metric_values["Actual target-day inflow"] != "Unavailable"
+    assert metric_values["Prediction error (predicted − actual)"] != "Unavailable"

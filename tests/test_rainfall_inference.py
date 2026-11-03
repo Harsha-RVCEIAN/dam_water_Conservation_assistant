@@ -1,13 +1,18 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.data.rainfall_features import RAINFALL_FEATURE_COLUMNS
 from src.models.rainfall_inference import (
     MODEL_ARTIFACT_FILES,
+    RainfallInferenceError,
+    eligible_prediction_issue_dates,
     feature_values_for_row,
     load_forecast_data,
     load_forecast_models,
     predict_all_models,
+    predict_for_issue_date,
+    select_best_learned_model,
 )
 
 
@@ -141,3 +146,156 @@ def test_saved_experiment_artifacts_make_a_latest_date_forecast():
     if pd.Timestamp(latest["calendar_date"]) > pd.Timestamp("2025-12-31"):
         assert np.isnan(feature_values["rainfall_mm_lag_1"])
         assert feature_values["rainfall_lag_1_available"] == 0
+
+
+def test_best_learned_model_is_selected_from_saved_test_metrics():
+    metrics = pd.read_csv("reports/rainfall_enhanced_model_metrics.csv")
+
+    assert select_best_learned_model(metrics) == "Tuned Random Forest"
+
+
+def _saved_forecast_inputs():
+    model_data, feature_names, dam_features = load_forecast_data()
+    dam_history = pd.read_csv(
+        "data/processed/krs_dam_processed.csv",
+        parse_dates=["calendar_date"],
+    )
+    return (
+        model_data,
+        feature_names,
+        dam_features,
+        dam_history,
+        load_forecast_models(),
+    )
+
+
+def test_historical_issue_date_predicts_following_day_and_reports_actual():
+    model_data, features, dam_features, dam_history, models = _saved_forecast_inputs()
+
+    result = predict_for_issue_date(
+        "2025-12-20",
+        model_data=model_data,
+        dam_history=dam_history,
+        feature_names=features,
+        dam_features=dam_features,
+        models=models,
+    )
+    actual = dam_history.loc[
+        dam_history["calendar_date"].eq(pd.Timestamp("2025-12-21")),
+        "inflow_cusecs",
+    ].iloc[0]
+
+    assert result.issue_date == pd.Timestamp("2025-12-20")
+    assert result.target_date == pd.Timestamp("2025-12-21")
+    assert np.isfinite(result.predicted_inflow_cusecs)
+    assert result.actual_inflow_cusecs == pytest.approx(actual)
+    assert result.signed_error_cusecs == pytest.approx(
+        result.predicted_inflow_cusecs - actual
+    )
+    assert not result.missing_rainfall_features
+
+
+def test_2026_issue_date_uses_saved_fitted_imputer_for_missing_rainfall():
+    model_data, features, dam_features, dam_history, models = _saved_forecast_inputs()
+
+    result = predict_for_issue_date(
+        "2026-10-21",
+        model_data=model_data,
+        dam_history=dam_history,
+        feature_names=features,
+        dam_features=dam_features,
+        models=models,
+    )
+
+    assert result.target_date == pd.Timestamp("2026-10-22")
+    assert np.isfinite(result.predicted_inflow_cusecs)
+    assert result.missing_rainfall_features
+    assert all(
+        np.isnan(result.feature_values[name])
+        for name in result.missing_rainfall_features
+    )
+    assert result.actual_inflow_cusecs is None
+
+
+def test_missing_rainfall_is_rejected_if_saved_model_has_no_fitted_imputer():
+    model_data, features, dam_features, dam_history, _ = _saved_forecast_inputs()
+
+    with pytest.raises(RainfallInferenceError, match="no fitted imputer"):
+        predict_for_issue_date(
+            "2026-10-21",
+            model_data=model_data,
+            dam_history=dam_history,
+            feature_names=features,
+            dam_features=dam_features,
+            models={"Tuned Random Forest": ConstantEstimator(100)},
+        )
+
+
+def test_prediction_rejects_dates_outside_archive_and_missing_required_lags():
+    model_data, features, dam_features, dam_history, models = _saved_forecast_inputs()
+
+    for issue_date in ("2027-01-01", "1990-01-01"):
+        with pytest.raises(RainfallInferenceError):
+            predict_for_issue_date(
+                issue_date,
+                model_data=model_data,
+                dam_history=dam_history,
+                feature_names=features,
+                dam_features=dam_features,
+                models=models,
+            )
+
+    eligible = eligible_prediction_issue_dates(
+        model_data, dam_history, dam_features
+    )
+    assert eligible[0] > pd.Timestamp("1990-01-01")
+    assert eligible[-1] == pd.Timestamp("2026-10-21")
+
+
+def test_historical_prediction_does_not_read_future_feature_rows():
+    model_data, features, dam_features, dam_history, models = _saved_forecast_inputs()
+    issue_date = pd.Timestamp("2025-12-20")
+    baseline = predict_for_issue_date(
+        issue_date,
+        model_data=model_data,
+        dam_history=dam_history,
+        feature_names=features,
+        dam_features=dam_features,
+        models=models,
+    )
+    altered = model_data.copy().astype(
+        {name: "float64" for name in RAINFALL_FEATURE_COLUMNS}
+    )
+    future_rows = pd.to_datetime(altered["calendar_date"]).gt(issue_date)
+    altered.loc[future_rows, list(dam_features)] = 1_000_000.0
+    altered.loc[future_rows, list(RAINFALL_FEATURE_COLUMNS)] = 1_000_000.0
+
+    after_future_change = predict_for_issue_date(
+        issue_date,
+        model_data=altered,
+        dam_history=dam_history,
+        feature_names=features,
+        dam_features=dam_features,
+        models=models,
+    )
+
+    assert after_future_change.predicted_inflow_cusecs == pytest.approx(
+        baseline.predicted_inflow_cusecs
+    )
+
+
+def test_prediction_rejects_issue_date_without_observed_dam_row():
+    model_data, features, dam_features, dam_history, models = _saved_forecast_inputs()
+    dam_history = dam_history.loc[
+        ~dam_history["calendar_date"].eq(pd.Timestamp("2025-12-20"))
+    ]
+
+    with pytest.raises(RainfallInferenceError, match="outside the available dam"):
+        predict_for_issue_date(
+            "2025-12-20",
+            model_data=model_data,
+            dam_history=dam_history,
+            feature_names=features,
+            dam_features=dam_features,
+            models=models,
+        )
