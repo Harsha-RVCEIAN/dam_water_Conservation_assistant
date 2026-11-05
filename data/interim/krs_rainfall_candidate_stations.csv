@@ -1,0 +1,82 @@
+Station Code,Location Name,District,Taluk,Basin,Sub Basin,Latitude,Longitude
+KC1GHSN556,Alur (H),Hassan,Alur,Cauvery,Upper Cauvery,12.9758,76.0047
+KC1GHSN557,Arehalli,Hassan,Belur,Cauvery,Upper Cauvery,13.0453,75.8028
+KC1GHSN558,Arkalgud,Hassan,Arkalgud,Cauvery,Upper Cauvery,12.7667,76.0561
+KC1GHSN559,Baguru,Hassan,Channarayapatna,Cauvery,Upper Cauvery,13.0164,76.3786
+KC1GHSN560,Ballupet,Hassan,Sakleshpur,Cauvery,Upper Cauvery,12.9453,75.8736
+KC1GHSN561,Basavapatna,Hassan,Arkalgud,Cauvery,Upper Cauvery,12.6139,76.1194
+KC1GHSN562,Belagodu,Hassan,Sakleshpur,Cauvery,Upper Cauvery,12.9825,75.8811
+KC1GHSN563,Belur (M),Hassan,Belur,Cauvery,Upper Cauvery,13.1753,75.8831
+KC1GHSN564,Biccodu,Hassan,Belur,Cauvery,Upper Cauvery,13.0756,75.8644
+KC1GHSN566,C.R.Patna,Hassan,Channarayapatna,Cauvery,Upper Cauvery,12.9206,76.3789
+KC1GHSN567,Channenahally,Hassan,Belur,Cauvery,Upper Cauvery,13.0578,75.9183
+KC1GHSN569,Doddabemmatti,Hassan,Arkalgud,Cauvery,Upper Cauvery,12.6858,75.9975
+KC1GHSN570,Doddamagge,Hassan,Arkalgud,Cauvery,Upper Cauvery,12.6939,76.0806
+KC1GHSN571,Dudda,Hassan,Hassan,Cauvery,Upper Cauvery,13.0897,76.2075
+KC1GHSN573,Gendehalli,Hassan,Belur,Cauvery,Upper Cauvery,13.1839,75.7556
+KC1GHSN575,Gorur,Hassan,Hassan,Cauvery,Upper Cauvery,12.835,76.0622
+KC1GHSN576,Halekote,Hassan,Hole Narsipur,Cauvery,Upper Cauvery,12.8469,76.1789
+KC1GHSN577,Hallibailu,Hassan,Sakleshpur,Cauvery,Upper Cauvery,12.7731,75.7867
+KC1GHSN578,Hallimysore,Hassan,Hole Narsipur,Cauvery,Upper Cauvery,12.6647,76.2569
+KC1GHSN579,Hanbal,Hassan,Sakleshpur,Cauvery,Upper Cauvery,13.0125,75.7247
+KC1GHSN580,Hassan,Hassan,Hassan,Cauvery,Upper Cauvery,13.0256,76.1028
+KC1GHSN581,Hethuru,Hassan,Sakleshpur,Cauvery,Upper Cauvery,12.7972,75.7886
+KC1GHSN583,H.N.Pura,Hassan,Hole Narsipur,Cauvery,Upper Cauvery,12.7717,76.2492
+KC1GHSN585,Hosuru,Hassan,Sakleshpur,Cauvery,Upper Cauvery,12.6906,75.8439
+KC1GHSN587,K.Hosakote,Hassan,Alur,Cauvery,Upper Cauvery,12.8636,75.8558
+KC1GHSN589,Kattaya,Hassan,Hassan,Cauvery,Upper Cauvery,12.8875,76.0731
+KC1GHSN590,Konanur,Hassan,Arkalgud,Cauvery,Upper Cauvery,12.6228,76.0519
+KC1GHSN592,Kundooru,Hassan,Alur,Cauvery,Upper Cauvery,12.8625,75.9706
+KC1GHSN595,Mallipatna,Hassan,Arkalgud,Cauvery,Upper Cauvery,12.7547,75.9603
+KC1GHSN596,Nuggehalli,Hassan,Channarayapatna,Cauvery,Upper Cauvery,13.0172,76.4789
+KC1GHSN597,Palya,Hassan,Alur,Cauvery,Upper Cauvery,12.9489,75.9422
+KC1GHSN598,Ramanathapur,Hassan,Arkalgud,Cauvery,Upper Cauvery,12.6167,76.0844
+KC1GHSN599,Sakaleshpur,Hassan,Sakleshpur,Cauvery,Upper Cauvery,12.9467,75.785
+KC1GHSN600,Salagame,Hassan,Hassan,Cauvery,Upper Cauvery,13.0828,76.09
+KC1GHSN601,Shanthigrama,Hassan,Hassan,Cauvery,Upper Cauvery,12.9839,76.2133
+KC1GHSN602,S.Belgola,Hassan,Channarayapatna,Cauvery,Upper Cauvery,12.8631,76.4728
+KC1GHSN603,S.Santhe,Hassan,Sakleshpur,Cauvery,Upper Cauvery,12.8622,75.7986
+KC1GHSN604,Udayapura,Hassan,Channarayapatna,Cauvery,Upper Cauvery,12.9711,76.3242
+KC1GHSN606,Yeslur,Hassan,Sakleshpur,Cauvery,Upper Cauvery,12.7756,75.8572
+KC2IIMYS1000,Bettadapura,Mysuru,Piriyapatna,Cauvery,Upper Cauvery,12.4681,76.1033
+KC2IIMYS1006,Galibidu,Kodagu,Madikeri,Cauvery,Upper Cauvery,12.4601,75.6957
+KC2IIMYS1009,Harangi,Kodagu,Kushalanagara,Cauvery,Upper Cauvery,12.4888,75.9051
+KC2IIMYS1012,Hunsur,Mysuru,Hunsur,Cauvery,Upper Cauvery,12.3128,76.2791
+KC2IIMYS1016,K.R.Nagar,Mysuru,K R Nagar,Cauvery,Upper Cauvery,12.4444,76.3855
+KC2IIMYS1018,Kushalnagar,Kodagu,Kushalanagara,Cauvery,Upper Cauvery,12.46,75.9586
+KC2IIMYS1019,Madapur,Kodagu,Somvarpet,Cauvery,Upper Cauvery,12.5127,75.809
+KC2IIMYS1022,Murnadu,Kodagu,Madikeri,Cauvery,Upper Cauvery,12.3137,75.7513
+KC2IIMYS1026,Napoklu,Kodagu,Madikeri,Cauvery,Upper Cauvery,12.3117,75.6916
+KC2IIMYS1028,Periyapatna,Mysuru,Piriyapatna,Cauvery,Upper Cauvery,12.3368,76.1062
+KC2IIMYS1029,Ponnampet,Kodagu,Ponnampete,Cauvery,Upper Cauvery,12.1479,75.9402
+KC2IIMYS1032,S.Santhe,Kodagu,Somvarpet,Cauvery,Upper Cauvery,12.7268,75.8873
+KC2IIMYS1034,Shanthahalli,Kodagu,Somvarpet,Cauvery,Upper Cauvery,12.6438,75.7955
+KC2IIMYS1035,Siddapur(K),Kodagu,Virarajendrapet,Cauvery,Upper Cauvery,12.2987,75.8809
+KC2IIMYS1036,Somwarpet,Kodagu,Somvarpet,Cauvery,Upper Cauvery,12.5958,75.8435
+KC2IIMYS1037,Srimangala,Kodagu,Ponnampete,Cauvery,Upper Cauvery,12.0176,75.9897
+KC2IIMYS1042,Virajpet,Kodagu,Virarajendrapet,Cauvery,Upper Cauvery,12.1982,75.7997
+KC2IIMYS998,Avandur,Kodagu,Madikeri,Cauvery,Upper Cauvery,12.3795,75.6734
+KC4GMYS962,K.R.Pet,Mandya,Krishnarajpet,Cauvery,Upper Cauvery,12.6581,76.4861
+KC2IIMYS1001,Bherya,Mysuru,K R Nagar,Cauvery,Upper Cauvery,12.5877,76.3499
+KC2IIMYS1002,Bilikere,Mysuru,Hunsur,Cauvery,Upper Cauvery,12.3353,76.4504
+KC2IIMYS1004,Chilkunda,Mysuru,Hunsur,Cauvery,Upper Cauvery,12.3387,76.1851
+KC2IIMYS1008,Hanasoge,Mysuru,K R Nagar,Cauvery,Upper Cauvery,12.5476,76.176
+KC2IIMYS1010,Hebbalu,Mysuru,K R Nagar,Cauvery,Upper Cauvery,12.4625,76.348
+KC2IIMYS1031,Saligrama,Mysuru,K R Nagar,Cauvery,Upper Cauvery,12.5605,76.2716
+KC2IIMYS1003,Bylakuppe,Mysuru,Piriyapatna,Cauvery,Upper Cauvery,12.4402,75.9861
+KC2IIMYS1015,Kodlipet,Kodagu,Somvarpet,Cauvery,Upper Cauvery,12.7953,75.8882
+KC2IIMYS1020,Madikeri,Kodagu,Madikeri,Cauvery,Upper Cauvery,12.4197,75.7485
+KC2IIMYS1021,Mirle,Mysuru,K R Nagar,Cauvery,Upper Cauvery,12.5377,76.3277
+KC2IIMYS1025,Naladi,Kodagu,Madikeri,Cauvery,Upper Cauvery,12.2572,75.617
+KC2IIMYS1030,Raavandur,Mysuru,Piriyapatna,Cauvery,Upper Cauvery,12.444,76.1926
+KC2IIMYS1039,Surlabhi,Kodagu,Somvarpet,Cauvery,Upper Cauvery,12.5883,75.7386
+KC1GHSN593,Maageri,Hassan,Sakleshpur,Cauvery,Upper Cauvery,12.6922,75.7567
+KC2IIMYS1005,Chunchakatte,Mysuru,K R Nagar,Cauvery,Upper Cauvery,12.5055,76.2934
+KC2IIMYS1017,Kurchi(IRR),Kodagu,Ponnampete,Cauvery,Upper Cauvery,11.9821,75.9866
+KC2IIMYS1023,Muttur,Mysuru,Piriyapatna,Cauvery,Upper Cauvery,12.3303,76.0156
+KC2IIMYS1040,Talacauvery,Kodagu,Madikeri,Cauvery,Upper Cauvery,12.3846,75.4949
+KC4GMYS957,Kikkeri,Mandya,Krishnarajpet,Cauvery,Upper Cauvery,12.7718,76.4212
+KC4GMYS980,S.B.Halli,Mandya,Krishnarajpet,Cauvery,Upper Cauvery,12.8069,76.582
+KC4GMYS981,Shilanere,Mandya,Krishnarajpet,Cauvery,Upper Cauvery,12.629046565,76.56041624
+KC2IIMYS1038,Suntikoppa,Kodagu,Kushalanagara,Cauvery,Upper Cauvery,12.4533,75.8288
+KC2IIMYS997,Alaluru,Mysuru,Piriyapatna,Cauvery,Upper Cauvery,12.2622,76.0996

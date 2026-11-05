@@ -163,6 +163,13 @@ def run_preprocessing_pipeline(
     output_path: Path = PROCESSED_DATA_PATH,
 ) -> pd.DataFrame:
     """Execute complete reproducible preprocessing pipeline and write output."""
+    if not raw_path.exists() and raw_path == RAW_DATA_PATH and output_path.exists():
+        print(
+            f"Raw dataset not found at {raw_path.resolve()}; "
+            f"leaving existing processed data at {output_path.resolve()} unchanged."
+        )
+        return pd.read_csv(output_path)
+
     print(f"Starting preprocessing pipeline from {raw_path}...")
     df = load_and_normalize(raw_path)
     initial_rows = len(df)

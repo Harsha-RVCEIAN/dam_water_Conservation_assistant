@@ -1,0 +1,5 @@
+outs:
+- md5: 81b0f4c95a3a36359505b41b0612bd01
+  size: 288654
+  hash: md5
+  path: krs_daily_rainfall.csv

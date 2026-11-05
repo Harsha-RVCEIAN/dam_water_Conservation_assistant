@@ -1,0 +1,114 @@
+schema: '2.0'
+stages:
+  merge_dam_rainfall:
+    cmd: .\.venv\Scripts\python.exe src\data\merge_dam_rainfall.py
+    deps:
+    - path: data\processed\krs_daily_rainfall.csv
+      hash: md5
+      md5: 81b0f4c95a3a36359505b41b0612bd01
+      size: 288654
+    - path: data\processed\krs_dam_processed.csv
+      hash: md5
+      md5: 7cee19ed6868354de8c4ea7ae2e02e40
+      size: 8638269
+    - path: src\data\merge_dam_rainfall.py
+      hash: md5
+      md5: e3e924af5a6fb0ae363166b534b918e4
+      size: 4442
+    outs:
+    - path: data\interim\krs_dam_rainfall_merged.csv
+      hash: md5
+      md5: 717f13b371e1c9a60e32b74a1595bce9
+      size: 8659283
+  train_rainfall_enhanced:
+    cmd: .\.venv\Scripts\python.exe -m src.models.train_rainfall
+    deps:
+    - path: data\interim\krs_dam_rainfall_merged.csv
+      hash: md5
+      md5: 717f13b371e1c9a60e32b74a1595bce9
+      size: 8659283
+    - path: data\processed\krs_daily_rainfall.csv
+      hash: md5
+      md5: 81b0f4c95a3a36359505b41b0612bd01
+      size: 288654
+    - path: data\processed\krs_dam_processed.csv
+      hash: md5
+      md5: 7cee19ed6868354de8c4ea7ae2e02e40
+      size: 8638269
+    - path: requirements.txt
+      hash: md5
+      md5: 3d4570cd3670e0a6fdeeaf3a1f8a2826
+      size: 286
+    - path: src\data\rainfall_features.py
+      hash: md5
+      md5: a3383a6e69625466c96ff7c9fe68a3c2
+      size: 8110
+    - path: src\models\train.py
+      hash: md5
+      md5: bdfd656624304736f99e4c66f41af1b7
+      size: 34793
+    - path: src\models\train_rainfall.py
+      hash: md5
+      md5: cc43edb5d9932baea2e23ed29e654529
+      size: 20559
+    outs:
+    - path: models\rainfall_enhanced\rainfall_7day_moving_average_v1.joblib
+      hash: md5
+      md5: 491ca0e7735914c0033a7b06fe252f74
+      size: 176
+    - path: models\rainfall_enhanced\rainfall_7day_moving_average_v1.json
+      hash: md5
+      md5: 51da852447fe07b7b21d391b12e3e019
+      size: 2374
+    - path: models\rainfall_enhanced\rainfall_histgradientboosting_v1.joblib
+      hash: md5
+      md5: 71c0536557d8637ab7c9e3942051d00a
+      size: 382878
+    - path: models\rainfall_enhanced\rainfall_histgradientboosting_v1.json
+      hash: md5
+      md5: e4ecd50428e43e3f8ded19c08268ed00
+      size: 3488
+    - path: models\rainfall_enhanced\rainfall_persistence_v1.joblib
+      hash: md5
+      md5: 2728caa4f62b46762715fafcaf08c6bf
+      size: 135
+    - path: models\rainfall_enhanced\rainfall_persistence_v1.json
+      hash: md5
+      md5: c8eeda696edd26d91fb1bb86065cd53d
+      size: 2291
+    - path: models\rainfall_enhanced\rainfall_random_forest_v1.joblib
+      hash: md5
+      md5: 3eb4e086b520ef6b3f8ad5bf34b727e2
+      size: 3950087
+    - path: models\rainfall_enhanced\rainfall_random_forest_v1.json
+      hash: md5
+      md5: cae177d7f8ba191c8171fe728eac331f
+      size: 3488
+    - path: models\rainfall_enhanced\rainfall_ridge_regression_v1.joblib
+      hash: md5
+      md5: d7f32db50f875248c942146b5f116c9e
+      size: 3286
+    - path: models\rainfall_enhanced\rainfall_ridge_regression_v1.json
+      hash: md5
+      md5: c31d0107c9a6cee5343a14cecb4ea582
+      size: 3458
+    - path: models\rainfall_enhanced\rainfall_seasonal_naive_v1.joblib
+      hash: md5
+      md5: aed3dbb60a10c092684d7228f49f7c45
+      size: 12761
+    - path: models\rainfall_enhanced\rainfall_seasonal_naive_v1.json
+      hash: md5
+      md5: 66db8d025038286bb53d5a8b4abb159a
+      size: 2390
+    - path: models\rainfall_enhanced\rainfall_tuned_random_forest_v1.joblib
+      hash: md5
+      md5: 19fd9d98c7780ebefa54c081afee8f45
+      size: 4399511
+    - path: models\rainfall_enhanced\rainfall_tuned_random_forest_v1.json
+      hash: md5
+      md5: c54450817416faffd870137dac854757
+      size: 3535
+    - path: reports\rainfall_enhanced_model_metrics.csv
+      hash: md5
+      md5: 3c370045d197851aa39099232f567ad4
+      size: 1930

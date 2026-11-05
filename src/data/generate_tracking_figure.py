@@ -7,7 +7,6 @@ Plots 4 panels in one high-resolution image:
 4. MLflow Registry Table: Experiment URI, Run IDs, Parameters, Metrics & Artifacts
 """
 
-import shutil
 from pathlib import Path
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
@@ -29,9 +28,6 @@ plt.rcParams.update({
 })
 
 REPORTS_FIG_DIR = Path("reports/figures")
-BRAIN_FIG_DIR = Path(r"C:\Users\harsh\.gemini\antigravity-ide\brain\bb1ce316-45e9-47cf-9b75-e772b241fecb\figures")
-REPORTS_FIG_DIR.mkdir(parents=True, exist_ok=True)
-BRAIN_FIG_DIR.mkdir(parents=True, exist_ok=True)
 
 def generate_tracking_figure() -> Path:
     """Generate composite 4-panel MLOps Experiment Tracking dashboard figure."""
@@ -228,12 +224,6 @@ def generate_tracking_figure() -> Path:
     out_path = REPORTS_FIG_DIR / "06_mlflow_experiment_tracking.png"
     fig.savefig(out_path, dpi=300)
     plt.close(fig)
-
-    if BRAIN_FIG_DIR.exists():
-        try:
-            shutil.copy2(out_path, BRAIN_FIG_DIR / "06_mlflow_experiment_tracking.png")
-        except Exception:
-            pass
 
     print(f"Generated and saved: {out_path}")
     return out_path
