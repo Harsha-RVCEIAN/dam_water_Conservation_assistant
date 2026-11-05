@@ -1,0 +1,5 @@
+flow_type,daily_cusecs_column,cumulative_tmc_column,total_rows,valid_consecutive_pairs,annual_resets_detected,correlation,mean_absolute_error_tmc,max_absolute_error_tmc,validation_status,engineering_note
+Inflow,inflow_cusecs,cumulative_inflow_tmc,13442,13396,37,1.0,0.000319,0.001126,PASS,High consistency (1.000000 correlation). Validates 0.0000864 TMC/cusec-day factor.
+River Outflow,outflow_cusecs,cumulative_outflow_tmc,13442,13403,37,1.0,0.000339,0.032118,PASS,High consistency (1.000000 correlation). Validates 0.0000864 TMC/cusec-day factor.
+Canal Withdrawal,withdrawal_cusecs,cumulative_withdrawal_tmc,13442,13403,37,0.999993,0.000364,0.000997,PASS,High consistency (0.999993 correlation). Validates 0.0000864 TMC/cusec-day factor.
+Evaporation,evaporation_cusecs,cumulative_evaporation_tmc,13442,12857,36,0.510785,0.000197,1.382,UNVERIFIED,Low correlation (0.5108). Evaporation measurement convention and reservoir area curve unverified.

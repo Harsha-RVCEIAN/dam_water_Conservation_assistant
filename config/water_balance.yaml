@@ -1,0 +1,12 @@
+balance:
+  flow_conversion_factor: 0.0000864  # cusecs * 86400 / 1e9 = TMC/day
+  storage_basis: "live_above_cill_tmc"
+  evaporation_status: "convention_unverified"  # Evaporation convention at source not validated
+  allow_incomplete_discrepancy: false  # Incomplete intervals never receive a numeric discrepancy
+  discrepancy_thresholds:
+    moderate_tmc: 2.0
+    extreme_tmc: 5.0
+    status: "provisional_engineering_review"
+    provenance: "historical_distribution_review"
+  leakage_disclaimer: "Water-balance discrepancies represent unmeasured runoff, timing delays, or gauge calibration; they do NOT prove leakage."
+

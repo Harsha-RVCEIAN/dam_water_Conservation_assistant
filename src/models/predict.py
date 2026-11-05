@@ -2,7 +2,7 @@
 
 Loads trained production pipeline artifact and computes next-day inflow forecasts
 with input validation, calibrated empirical prediction intervals, domain boundary checks,
-and baseline comparisons.
+baseline comparisons, and dynamic observation freshness verification.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import joblib
 import numpy as np
 import pandas as pd
+import yaml
 
 from src.models.train import (
     FEATURE_COLUMNS,
@@ -22,9 +23,27 @@ from src.models.train import (
     TARGET_COLUMN,
 )
 
+FRESHNESS_CONFIG_PATH = Path("config/freshness.yaml")
+
+
+def load_freshness_policy(config_path: Path = FRESHNESS_CONFIG_PATH) -> Dict[str, Any]:
+    """Load configurable freshness policy."""
+    if not config_path.exists():
+        return {
+            "freshness": {
+                "max_acceptable_delay_days": 1,
+                "status_labels": {
+                    "current": "CURRENT_OPERATIONAL",
+                    "stale": "HISTORICAL_STALE",
+                },
+            }
+        }
+    with open(config_path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
 
 class InflowForecaster:
-    """Production wrapper for dam inflow forecasting."""
+    """Production wrapper for dam inflow forecasting with dynamic freshness checks."""
 
     def __init__(
         self,
@@ -38,13 +57,17 @@ class InflowForecaster:
         self.load()
 
     def load(self) -> None:
-        """Load joblib model pipeline and JSON metadata."""
+        """Load joblib model pipeline and JSON metadata with integrity checks."""
         if not self.model_path.exists():
             raise FileNotFoundError(f"Model artifact not found at {self.model_path.resolve()}")
-        self.pipeline = joblib.load(self.model_path)
+        if not self.metadata_path.exists():
+            raise FileNotFoundError(f"Model metadata not found at {self.metadata_path.resolve()}. Mismatched artifact state.")
 
-        if self.metadata_path.exists():
+        self.pipeline = joblib.load(self.model_path)
+        try:
             self.metadata = json.loads(self.metadata_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            raise ValueError(f"Failed to parse model metadata at {self.metadata_path}: {e}")
 
     def check_input_domain(self, feature_df: pd.DataFrame) -> List[str]:
         """Check whether input features exceed validated training domain boundaries."""
@@ -56,23 +79,64 @@ class InflowForecaster:
         if "inflow_lag_1" in feature_df.columns:
             val = float(feature_df["inflow_lag_1"].iloc[0])
             if val > hist_max_inflow:
-                warnings.append(f"Input inflow ({val:,.0f} cfs) exceeds historical maximum ({hist_max_inflow:,.0f} cfs). Extrapolation uncertainty is elevated.")
+                warnings.append(
+                    f"Input inflow ({val:,.0f} cfs) exceeds historical maximum ({hist_max_inflow:,.0f} cfs). "
+                    f"Extrapolation uncertainty is elevated."
+                )
             if val < 0.0:
                 warnings.append("Input inflow is negative, which is physically impossible.")
 
         if "reservoir_level_ft" in feature_df.columns:
             lvl = float(feature_df["reservoir_level_ft"].iloc[0])
             if lvl > frl_ft + 5.0:
-                warnings.append(f"Reservoir level ({lvl:.1f} ft) exceeds Full Reservoir Level ({frl_ft:.1f} ft MSL). Dam is in surcharge or flood spillway routing.")
+                warnings.append(
+                    f"Reservoir level ({lvl:.1f} ft) exceeds Full Reservoir Level ({frl_ft:.1f} ft MSL). "
+                    f"Dam is in surcharge or flood spillway routing."
+                )
 
         return warnings
+
+    def evaluate_freshness(
+        self,
+        latest_observation_date: Union[str, pd.Timestamp],
+        current_date: Optional[Union[str, pd.Timestamp]] = None,
+    ) -> Dict[str, Any]:
+        """Dynamically evaluate observation age and forecast validity."""
+        policy = load_freshness_policy().get("freshness", {})
+        max_delay = policy.get("max_acceptable_delay_days", 1)
+
+        t_obs = pd.to_datetime(latest_observation_date).normalize()
+        t_curr = pd.to_datetime(current_date).normalize() if current_date is not None else pd.Timestamp.now().normalize()
+
+        data_age_days = int((t_curr - t_obs).days)
+        is_stale = data_age_days > max_delay
+        status = "HISTORICAL_STALE" if is_stale else "CURRENT_OPERATIONAL"
+
+        origin_date = str(t_obs.date())
+        target_date = str((t_obs + pd.Timedelta(days=1)).date())
+
+        note = (
+            f"Observation date ({origin_date}) is {data_age_days} day(s) older than current date ({t_curr.date()}). "
+            "Forecast represents historical evaluation and must not be presented as a live operational prediction."
+            if is_stale
+            else "Observation meets freshness criteria for operational daily forecasting."
+        )
+
+        return {
+            "forecast_origin_date": origin_date,
+            "target_date": target_date,
+            "current_date": str(t_curr.date()),
+            "data_age_days": data_age_days,
+            "is_stale": is_stale,
+            "freshness_status": status,
+            "freshness_note": note,
+        }
 
     def predict(self, feature_df: pd.DataFrame) -> np.ndarray:
         """Predict next-day inflow in cusecs from input DataFrame."""
         if self.pipeline is None:
             raise RuntimeError("Model pipeline is not loaded.")
 
-        # Ensure cyclic features are present if computed dynamically
         df_eval = feature_df.copy()
         if "sin_day_of_year" not in df_eval.columns and "day_of_year" in df_eval.columns:
             df_eval["sin_day_of_year"] = np.sin(2.0 * np.pi * df_eval["day_of_year"] / 365.25)
@@ -85,7 +149,7 @@ class InflowForecaster:
 
         X = df_eval[FEATURE_COLUMNS]
         preds = self.pipeline.predict(X)
-        # Ensure flows cannot be physically negative
+        # Flows cannot be physically negative
         preds_non_neg = np.clip(preds, a_min=0.0, a_max=None)
         return preds_non_neg
 
@@ -98,14 +162,15 @@ class InflowForecaster:
         q10_err = uncert.get("residual_quantile_10", -1500.0)
         q90_err = uncert.get("residual_quantile_90", 2500.0)
 
-        # Residual = y_true - y_pred  =>  y_true = y_pred + residual
         lower_bounds = np.clip(point_preds + q10_err, a_min=0.0, a_max=None)
         upper_bounds = np.clip(point_preds + q90_err, a_min=0.0, a_max=None)
 
         return point_preds, lower_bounds, upper_bounds
 
     def predict_latest_from_processed(
-        self, processed_path: Path = Path("data/processed/krs_dam_processed.csv")
+        self,
+        processed_path: Path = Path("data/processed/krs_dam_processed.csv"),
+        current_date: Optional[Union[str, pd.Timestamp]] = None,
     ) -> Dict[str, Any]:
         """Predict inflow for the day following the most recent observation in processed dataset."""
         df = pd.read_csv(processed_path)
@@ -120,12 +185,14 @@ class InflowForecaster:
 
         persistence_val = latest_inflow
         warnings = self.check_input_domain(latest_row)
+        freshness_info = self.evaluate_freshness(latest_date, current_date=current_date)
 
         return {
             "forecast_horizon": "1 Day Ahead",
             "latest_observed_date": latest_date,
             "latest_observed_inflow_cusecs": latest_inflow,
-            "forecast_date": str((pd.to_datetime(latest_date) + pd.Timedelta(days=1)).date()),
+            "forecast_origin_date": freshness_info["forecast_origin_date"],
+            "forecast_target_date": freshness_info["target_date"],
             "forecast_inflow_cusecs": round(pred_val, 2),
             "interval_lower_cusecs": round(lower_val, 2),
             "interval_upper_cusecs": round(upper_val, 2),
@@ -134,6 +201,10 @@ class InflowForecaster:
             "difference_from_baseline": round(pred_val - persistence_val, 2),
             "model_type": self.metadata.get("model_type", "RandomForestRegressor"),
             "domain_warnings": warnings,
+            "data_age_days": freshness_info["data_age_days"],
+            "is_stale": freshness_info["is_stale"],
+            "freshness_status": freshness_info["freshness_status"],
+            "freshness_note": freshness_info["freshness_note"],
         }
 
 
@@ -141,7 +212,7 @@ def main() -> None:
     """CLI test for inference module."""
     forecaster = InflowForecaster()
     result = forecaster.predict_latest_from_processed()
-    print("Latest Forecast Result with Uncertainty:")
+    print("Latest Forecast Result with Dynamic Freshness & Uncertainty:")
     for k, v in result.items():
         print(f"  {k}: {v}")
 

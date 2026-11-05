@@ -1,20 +1,27 @@
 """Raw data validation module for K.R.Sagara Dam dataset.
 
 Performs schema verification, date parsing checks, duplicate detection,
-sampling frequency analysis, missingness analysis, and physical plausibility checks.
+sampling frequency analysis, missingness analysis, physical plausibility checks,
+and generates both human-readable and machine-readable data quality reports.
 """
 
 from __future__ import annotations
 
-import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+import datetime
+import json
 from pathlib import Path
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
+import yaml
 
 RAW_DATA_PATH = Path("data/raw/krs_dam_dataset.csv")
 REPORT_PATH = Path("reports/data_validation_report.md")
+CSV_REPORT_PATH = Path("reports/data_quality_report.csv")
+JSON_SUMMARY_PATH = Path("reports/data_quality_summary.json")
 
 # Standard schema definition
 CANONICAL_COLUMNS = [
@@ -79,15 +86,22 @@ def normalize_dataframe_columns(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[st
 
 def parse_monitoring_dates(series: pd.Series) -> pd.Series:
     """Parse dates strictly using known formats (%d-%m-%Y %H:%M:%S, %d-%m-%Y, or ISO)."""
-    # The primary format in KRS dataset is DD-MM-YYYY HH:MM:SS
     parsed = pd.to_datetime(series, format="%d-%m-%Y %H:%M:%S", errors="coerce")
     if parsed.isna().any():
-        # Fallback for alternative date-only or ISO strings
         fallback = pd.to_datetime(series[parsed.isna()], format="%d-%m-%Y", errors="coerce")
         parsed.update(fallback)
         if parsed.isna().any():
             parsed.update(pd.to_datetime(series[parsed.isna()], errors="coerce"))
     return parsed
+
+
+@dataclass
+class SuspiciousRecord:
+    row_index: int
+    monitoring_date: str
+    column: str
+    observed_value: Any
+    reason: str
 
 
 @dataclass
@@ -110,6 +124,9 @@ class ValidationReport:
     flagged_anomalies: List[str] = field(default_factory=list)
     constant_columns: Dict[str, Any] = field(default_factory=dict)
     annual_reset_months: List[int] = field(default_factory=list)
+    suspicious_records: List[Dict[str, Any]] = field(default_factory=list)
+    data_age_days: Optional[int] = None
+    freshness_status: str = "HISTORICAL_ARCHIVE"
 
     def to_markdown(self) -> str:
         """Format the validation results as a clean, factual markdown report."""
@@ -121,6 +138,7 @@ class ValidationReport:
             f"- **Total columns:** {self.total_columns}",
             f"- **Observed date range:** {self.start_date} to {self.end_date}",
             f"- **Strict chronological order:** {'Yes' if self.is_chronological else 'No'}",
+            f"- **Data age from current execution:** {self.data_age_days} days ({self.freshness_status})",
             f"- **Duplicate timestamps:** {self.duplicate_timestamps}",
             f"- **Duplicate calendar days:** {self.duplicate_calendar_days}",
             f"- **Date parse failures:** {self.date_parse_failures}",
@@ -145,16 +163,17 @@ class ValidationReport:
             "",
             "## 2. Missing Values Analysis",
             "",
-            "| Column | Missing Count | Missing Percentage |",
-            "|---|---|---|",
+            "| Column | Missing Count | Missing Percentage | Policy |",
+            "|---|---|---|---|",
         ])
         for col, count in self.missing_values_by_column.items():
             pct = (count / self.total_rows * 100) if self.total_rows > 0 else 0.0
-            lines.append(f"| `{col}` | {count:,} | {pct:.2f}% |")
+            policy = "Preserved NaN (never zeroed)" if count > 0 else "Complete"
+            lines.append(f"| `{col}` | {count:,} | {pct:.2f}% | {policy} |")
 
         lines.extend([
             "",
-            "## 3. Physical Plausibility & Anomaly Inspection",
+            "## 3. Physical Plausibility & Suspicious Record Review",
             "",
         ])
         if self.flagged_anomalies:
@@ -162,6 +181,19 @@ class ValidationReport:
                 lines.append(f"- {item}")
         else:
             lines.append("- No physical boundary violations detected.")
+
+        if self.suspicious_records:
+            lines.extend([
+                "",
+                "### Detailed Suspicious Records Audit",
+                "",
+                "| Row Index | Date | Column | Observed Value | Review Reason | Action |",
+                "|---|---|---|---|---|---|",
+            ])
+            for r in self.suspicious_records[:20]:
+                lines.append(f"| {r['row_index']} | `{r['monitoring_date']}` | `{r['column']}` | `{r['observed_value']}` | {r['reason']} | Flagged & Preserved |")
+            if len(self.suspicious_records) > 20:
+                lines.append(f"\n*(Truncated: {len(self.suspicious_records)} total suspicious observations recorded in machine-readable summary)*")
 
         lines.extend([
             "",
@@ -175,14 +207,14 @@ class ValidationReport:
             "",
             "## 5. Cumulative Series Resets",
             "",
-            f"- Cumulative flow columns reset annually on Month: `{self.annual_reset_months}` (June 1st, corresponding to the start of the Indian water year / southwest monsoon).",
+            f"- Cumulative flow columns reset annually on Month: `{self.annual_reset_months}` (June 1st, water year start).",
             "",
-            "## 6. Recommendations for Pipeline",
+            "## 6. Recommendations & Policy Enforcement",
             "",
-            "- **Inflow target:** Has only 7 missing values out of 13,442 rows (99.95% complete). Highly suitable as primary forecasting target.",
-            "- **Percentage Full:** Missing 80.1% of records (only populated from mid-2019 onward). Pipeline should derive Percentage Full directly via `(gross_capacity_tmc / design_gross_capacity_tmc) * 100`.",
-            "- **Single Missing Date:** `2020-02-11` is missing. Preserve gap in raw; for lag generation, align on calendar dates.",
-            "- **Flagged Reservoir Level Anomaly:** Row at `1992-08-28` records `14782.0 ft` (transcription error for ~2468.48 ft). Flag for review and keep raw intact.",
+            "- **Inflow target:** Complete (99.95%). Highly suitable for forecasting.",
+            "- **Evaporation:** 546 missing observations preserved as NaN. Evaporation convention is unverified.",
+            "- **High Capacity Observations:** 5 records exceed design capacity (49.452 TMC). Preserved and audited.",
+            "- **Calendar Gap:** 2020-02-11 is missing. Interval arithmetic must not treat 2-day gap as 1-day step.",
         ])
 
         return "\n".join(lines)
@@ -222,19 +254,33 @@ def run_validation(data_path: Path = RAW_DATA_PATH) -> ValidationReport:
         missing_days_set = set(full_range) - set(valid_dates)
         missing_calendar_days = sorted([d.strftime("%Y-%m-%d") for d in missing_days_set])
 
+    # Dynamic data age
+    today = pd.Timestamp.now().normalize()
+    data_age_days = (today - valid_dates.iloc[-1]).days if len(valid_dates) > 0 else None
+    freshness_status = "CURRENT_OPERATIONAL" if (data_age_days is not None and data_age_days <= 1) else "HISTORICAL_ARCHIVE"
+
     # Missing values
     missing_by_col = {col: int(df[col].isna().sum()) for col in df.columns}
 
     # Physical plausibility & anomalies
     flagged = []
+    suspicious: List[Dict[str, Any]] = []
     negative_counts = {}
     for col in df.select_dtypes(include=["float64", "int64"]).columns:
         neg = int((df[col] < 0).sum())
         negative_counts[col] = neg
         if neg > 0:
             flagged.append(f"Found {neg} negative values in `{col}`.")
+            for idx, val in df[df[col] < 0][col].items():
+                suspicious.append(asdict(SuspiciousRecord(
+                    row_index=int(idx),
+                    monitoring_date=str(df.loc[idx, "monitoring_date"]),
+                    column=col,
+                    observed_value=float(val),
+                    reason="Negative physical value",
+                )))
 
-    # Specific KRS plausibility checks
+    # KRS specific plausibility checks
     if "reservoir_level_ft" in df.columns:
         anom_level = df[df["reservoir_level_ft"] > 2500]
         if not anom_level.empty:
@@ -243,11 +289,28 @@ def run_validation(data_path: Path = RAW_DATA_PATH) -> ValidationReport:
                     f"Physically implausible Reservoir Level `{row['reservoir_level_ft']:.1f} ft` at row {idx} "
                     f"({row['monitoring_date']}). Normal FRL is ~2482 ft MSL. Likely transcription error."
                 )
+                suspicious.append(asdict(SuspiciousRecord(
+                    row_index=int(idx),
+                    monitoring_date=str(row["monitoring_date"]),
+                    column="reservoir_level_ft",
+                    observed_value=float(row["reservoir_level_ft"]),
+                    reason="Elevation exceeds 2500 ft (normal FRL ~2482 ft MSL)",
+                )))
 
-    if "design_gross_capacity_tmc" in df.columns and "gross_capacity_tmc" in df.columns:
-        exceed_cap = df[df["gross_capacity_tmc"] > df["design_gross_capacity_tmc"] * 1.5]
-        if not exceed_cap.empty:
-            flagged.append(f"Found {len(exceed_cap)} records where gross capacity exceeds 150% of design capacity.")
+    if "gross_capacity_tmc" in df.columns:
+        exceed_design = df[df["gross_capacity_tmc"] > 49.452]
+        if not exceed_design.empty:
+            flagged.append(
+                f"Found {len(exceed_design)} records where gross storage exceeds design capacity (49.452 TMC), peaking at {exceed_design['gross_capacity_tmc'].max():.3f} TMC. Preserved for review."
+            )
+            for idx, row in exceed_design.iterrows():
+                suspicious.append(asdict(SuspiciousRecord(
+                    row_index=int(idx),
+                    monitoring_date=str(row["monitoring_date"]),
+                    column="gross_capacity_tmc",
+                    observed_value=float(row["gross_capacity_tmc"]),
+                    reason="Exceeds KRS design gross capacity (49.452 TMC)",
+                )))
 
     # Constant columns
     constants = {}
@@ -262,7 +325,7 @@ def run_validation(data_path: Path = RAW_DATA_PATH) -> ValidationReport:
         df_sorted = df.assign(_date=calendar_days).sort_values("_date").reset_index(drop=True)
         inflow_diff = df_sorted["cumulative_inflow_tmc"].diff()
         resets = df_sorted[inflow_diff < -1]
-        reset_months = sorted(list(resets["_date"].dt.month.unique()))
+        reset_months = [int(m) for m in sorted(list(resets["_date"].dt.month.unique()))]
 
     report = ValidationReport(
         raw_path=str(data_path),
@@ -283,21 +346,85 @@ def run_validation(data_path: Path = RAW_DATA_PATH) -> ValidationReport:
         flagged_anomalies=flagged,
         constant_columns=constants,
         annual_reset_months=reset_months,
+        suspicious_records=suspicious,
+        data_age_days=data_age_days,
+        freshness_status=freshness_status,
     )
     return report
 
 
+def generate_tabular_data_quality_report(df: pd.DataFrame, report: ValidationReport) -> pd.DataFrame:
+    """Generate column-level tabular data quality audit."""
+    rows = []
+    for col in df.columns:
+        s = df[col]
+        non_null = int(s.notna().sum())
+        missing = int(s.isna().sum())
+        missing_pct = round((missing / len(df)) * 100, 2)
+        zero_cnt = int((s == 0).sum()) if pd.api.types.is_numeric_dtype(s) else 0
+        neg_cnt = int((s < 0).sum()) if pd.api.types.is_numeric_dtype(s) else 0
+        min_v = float(s.min()) if pd.api.types.is_numeric_dtype(s) and non_null > 0 else None
+        max_v = float(s.max()) if pd.api.types.is_numeric_dtype(s) and non_null > 0 else None
+
+        status = "OK"
+        if missing_pct > 50.0:
+            status = "SPARSE"
+        elif neg_cnt > 0:
+            status = "INVALID_NEGATIVE"
+        elif col == "reservoir_level_ft" and max_v is not None and max_v > 2500:
+            status = "ANOMALY_PRESENT"
+        elif col == "gross_capacity_tmc" and max_v is not None and max_v > 49.452:
+            status = "EXCEEDS_DESIGN_CAPACITY"
+
+        rows.append({
+            "column_name": col,
+            "data_type": str(s.dtype),
+            "total_rows": len(df),
+            "non_null_count": non_null,
+            "missing_count": missing,
+            "missing_percentage": missing_pct,
+            "zero_count": zero_cnt,
+            "negative_count": neg_cnt,
+            "min_value": min_v,
+            "max_value": max_v,
+            "quality_status": status,
+        })
+    return pd.DataFrame(rows)
+
+
 def main() -> None:
-    """CLI runner to validate raw data and generate reports/data_validation_report.md."""
+    """CLI runner to validate raw data and generate reports."""
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     report = run_validation(RAW_DATA_PATH)
-    md_content = report.to_markdown()
-    REPORT_PATH.write_text(md_content, encoding="utf-8")
+
+    # 1. Write Markdown report
+    REPORT_PATH.write_text(report.to_markdown(), encoding="utf-8")
+
+    # 2. Write CSV data quality report
+    df_raw = pd.read_csv(RAW_DATA_PATH)
+    df_norm, _ = normalize_dataframe_columns(df_raw)
+    dq_table = generate_tabular_data_quality_report(df_norm, report)
+    dq_table.to_csv(CSV_REPORT_PATH, index=False)
+
+    # 3. Write JSON summary
+    summary_dict = asdict(report)
+    summary_dict["generated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    def json_default(obj):
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+        if isinstance(obj, (np.ndarray,)):
+            return obj.tolist()
+        return str(obj)
+
+    JSON_SUMMARY_PATH.write_text(json.dumps(summary_dict, indent=2, default=json_default), encoding="utf-8")
+
     print(f"Validation completed successfully:")
     print(f"  Rows: {report.total_rows:,}")
     print(f"  Date range: {report.start_date} to {report.end_date}")
-    print(f"  Missing values: {sum(report.missing_values_by_column.values())}")
-    print(f"  Report saved to: {REPORT_PATH}")
+    print(f"  Suspicious records flagged: {len(report.suspicious_records)}")
+    print(f"  Reports written: {REPORT_PATH}, {CSV_REPORT_PATH}, {JSON_SUMMARY_PATH}")
 
 
 if __name__ == "__main__":

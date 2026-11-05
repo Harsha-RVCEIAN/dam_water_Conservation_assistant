@@ -1,0 +1,38 @@
+reservoir:
+  name: "Krishna Raja Sagara (KRS)"
+  basin: "Cauvery"
+  sub_basin: "Upper Cauvery"
+  river: "Cauvery"
+
+capacity_references:
+  - name: "design_gross"
+    value_tmc: 49.452
+    unit: "TMC"
+    type: "design"
+    status: "reference_only"
+    source: "Central Water Commission / Karnataka Water Resources Dept"
+    verification_status: "verified_historical_design"
+  - name: "design_live"
+    value_tmc: 45.051
+    unit: "TMC"
+    type: "design"
+    status: "reference_only"
+    source: "Project Design Specification"
+    verification_status: "verified_historical_design"
+  - name: "surveyed_live_2009"
+    value_tmc: 42.99
+    unit: "TMC"
+    type: "survey"
+    year: 2009
+    status: "historical_reference"
+    source: "Karnataka Hydrographic Survey 2009"
+    verification_status: "historical_survey_only"
+
+storage:
+  candidate_live_column: "live_above_cill_tmc"
+  observed_gross_column: "gross_capacity_tmc"
+  dead_storage_tmc: 4.401
+  # Explicitly null per Layer A spec Section 3.2 until current operational denominator is certified
+  percentage_capacity_reference: null
+  percentage_display_note: "Operational live capacity denominator unverified; percentage marked unverified/NA."
+

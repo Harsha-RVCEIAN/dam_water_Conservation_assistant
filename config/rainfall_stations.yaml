@@ -1,0 +1,14 @@
+rainfall_pipeline:
+  status: "BLOCKED_EXTERNAL_SOURCE_ABSENT"
+  reason: "Raw rainfall dataset and station archives are absent from the repository; no source CSVs or API credentials provided."
+  proxy_district_selection:
+    kodagu_stations: 3
+    mysuru_stations: 4
+    hassan_stations: 3
+    mandya_stations: 0
+  aggregation:
+    method: "unweighted_daily_mean"
+    naming: "regional_mean_rainfall_mm"
+    zero_treatment: "zero_is_valid_observation_not_missing"
+    missing_treatment: "no_reporting_remains_nan"
+

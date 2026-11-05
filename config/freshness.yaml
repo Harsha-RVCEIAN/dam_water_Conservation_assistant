@@ -1,0 +1,8 @@
+freshness:
+  max_acceptable_delay_days: 1
+  forecast_horizon_days: 1
+  status_labels:
+    current: "CURRENT_OPERATIONAL"
+    stale: "HISTORICAL_STALE"
+  caveat: "Forecast is calculated from historical archive and is marked stale if latest record is older than 1 day."
+

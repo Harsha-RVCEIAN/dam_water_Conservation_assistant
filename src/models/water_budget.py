@@ -1,5 +1,8 @@
 """Water-budget logic, unit conversions, and hypothetical conservation scenario modeling.
 
+This module provides backward-compatible wrappers around the canonical
+`src.models.water_balance` and `src.utils.unit_conversions` modules.
+
 Formulas:
 - Daily volume (TMC) = Mean daily flow (cusecs) * 0.0000864
 - Expected storage change (TMC) ≈ Inflow - Outflow - Withdrawal - Evaporation
@@ -13,8 +16,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
+from src.utils.unit_conversions import (
+    CUSEC_DAY_TO_TMC_FACTOR,
+    cusecs_to_tmc,
+    tmc_to_cusecs,
+)
+
 # Physical constants
-CUSEC_DAY_TO_TMC = 0.0000864  # 1 cusec * 86400 seconds / 10^9 cu ft
+CUSEC_DAY_TO_TMC = CUSEC_DAY_TO_TMC_FACTOR  # 1 cusec * 86400 seconds / 10^9 cu ft
 TMC_TO_CUSEC_DAY = 1.0 / CUSEC_DAY_TO_TMC
 KRS_DESIGN_GROSS_CAPACITY_TMC = 49.452
 KRS_DEAD_STORAGE_TMC = 4.379  # Approx dead storage below cill level
@@ -22,16 +31,12 @@ KRS_DEAD_STORAGE_TMC = 4.379  # Approx dead storage below cill level
 
 def cusec_day_to_tmc(cusecs: float) -> float:
     """Convert daily mean flow rate (cusecs) to daily volume in TMC."""
-    if cusecs < 0:
-        raise ValueError(f"Flow rate cannot be negative: {cusecs}")
-    return float(cusecs * CUSEC_DAY_TO_TMC)
+    return float(cusecs_to_tmc(cusecs, hours=24.0))
 
 
 def tmc_to_cusec_day(tmc: float) -> float:
     """Convert volume in TMC to equivalent daily mean flow rate in cusecs."""
-    if tmc < 0:
-        raise ValueError(f"Volume cannot be negative: {tmc}")
-    return float(tmc * TMC_TO_CUSEC_DAY)
+    return float(tmc_to_cusecs(tmc, hours=24.0))
 
 
 @dataclass

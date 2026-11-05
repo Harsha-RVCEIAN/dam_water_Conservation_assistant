@@ -1,0 +1,155 @@
+{
+  "raw_path": "data\\raw\\krs_dam_dataset.csv",
+  "total_rows": 13442,
+  "total_columns": 19,
+  "raw_headers": [
+    "Reservoir Name",
+    "Basin",
+    "Sub \nBasin",
+    "River",
+    "Monitoring Date",
+    "Percentage Full",
+    "Reservoir Level (ft)",
+    "Design Gross Capacity (TMC)",
+    "Gross Capacity (TMC)",
+    "Live Capacity \n(TMC)",
+    "Live Above Cill (TMC)",
+    "Inflow (Cusecs)",
+    "Outflow to River (Cusecs)",
+    "Canal Withdrawal (Cusecs)",
+    "Evaporation (Cusecs)",
+    "Cumulative Inflow (TMC)",
+    "Cumulative Outflow (TMC)",
+    "Cumulative Withdrawal (TMC)",
+    "Cumulative Evaporation \n(TMC)"
+  ],
+  "cleaned_headers": [
+    "reservoir_name",
+    "basin",
+    "sub_basin",
+    "river",
+    "monitoring_date",
+    "percentage_full",
+    "reservoir_level_ft",
+    "design_gross_capacity_tmc",
+    "gross_capacity_tmc",
+    "live_capacity_tmc",
+    "live_above_cill_tmc",
+    "inflow_cusecs",
+    "outflow_cusecs",
+    "withdrawal_cusecs",
+    "evaporation_cusecs",
+    "cumulative_inflow_tmc",
+    "cumulative_outflow_tmc",
+    "cumulative_withdrawal_tmc",
+    "cumulative_evaporation_tmc"
+  ],
+  "missing_required_columns": [],
+  "date_parse_failures": 0,
+  "duplicate_timestamps": 0,
+  "duplicate_calendar_days": 0,
+  "start_date": "1990-01-01",
+  "end_date": "2026-10-21",
+  "is_chronological": true,
+  "missing_calendar_days": [
+    "2020-02-11"
+  ],
+  "missing_values_by_column": {
+    "reservoir_name": 0,
+    "basin": 0,
+    "sub_basin": 0,
+    "river": 0,
+    "monitoring_date": 0,
+    "percentage_full": 10763,
+    "reservoir_level_ft": 0,
+    "design_gross_capacity_tmc": 0,
+    "gross_capacity_tmc": 0,
+    "live_capacity_tmc": 0,
+    "live_above_cill_tmc": 0,
+    "inflow_cusecs": 7,
+    "outflow_cusecs": 0,
+    "withdrawal_cusecs": 0,
+    "evaporation_cusecs": 546,
+    "cumulative_inflow_tmc": 0,
+    "cumulative_outflow_tmc": 0,
+    "cumulative_withdrawal_tmc": 0,
+    "cumulative_evaporation_tmc": 365
+  },
+  "negative_values_by_column": {
+    "percentage_full": 0,
+    "reservoir_level_ft": 0,
+    "design_gross_capacity_tmc": 0,
+    "gross_capacity_tmc": 0,
+    "live_capacity_tmc": 0,
+    "live_above_cill_tmc": 0,
+    "inflow_cusecs": 0,
+    "outflow_cusecs": 0,
+    "withdrawal_cusecs": 0,
+    "evaporation_cusecs": 0,
+    "cumulative_inflow_tmc": 0,
+    "cumulative_outflow_tmc": 0,
+    "cumulative_withdrawal_tmc": 0,
+    "cumulative_evaporation_tmc": 0
+  },
+  "flagged_anomalies": [
+    "Physically implausible Reservoir Level `14782.0 ft` at row 970 (28-08-1992 12:08:00). Normal FRL is ~2482 ft MSL. Likely transcription error.",
+    "Found 5 records where gross storage exceeds design capacity (49.452 TMC), peaking at 69.322 TMC. Preserved for review."
+  ],
+  "constant_columns": {
+    "reservoir_name": "K.R.Sagara Dam",
+    "basin": "Cauvery",
+    "sub_basin": "Upper Cauvery",
+    "river": "Cauvery",
+    "design_gross_capacity_tmc": 49.452
+  },
+  "annual_reset_months": [
+    6
+  ],
+  "suspicious_records": [
+    {
+      "row_index": 970,
+      "monitoring_date": "28-08-1992 12:08:00",
+      "column": "reservoir_level_ft",
+      "observed_value": 14782.0,
+      "reason": "Elevation exceeds 2500 ft (normal FRL ~2482 ft MSL)"
+    },
+    {
+      "row_index": 1739,
+      "monitoring_date": "06-10-1994 12:10:00",
+      "column": "gross_capacity_tmc",
+      "observed_value": 49.552,
+      "reason": "Exceeds KRS design gross capacity (49.452 TMC)"
+    },
+    {
+      "row_index": 3343,
+      "monitoring_date": "26-02-1999 12:02:00",
+      "column": "gross_capacity_tmc",
+      "observed_value": 58.903,
+      "reason": "Exceeds KRS design gross capacity (49.452 TMC)"
+    },
+    {
+      "row_index": 7714,
+      "monitoring_date": "14-02-2011 12:02:00",
+      "column": "gross_capacity_tmc",
+      "observed_value": 69.322,
+      "reason": "Exceeds KRS design gross capacity (49.452 TMC)"
+    },
+    {
+      "row_index": 7715,
+      "monitoring_date": "15-02-2011 12:02:00",
+      "column": "gross_capacity_tmc",
+      "observed_value": 68.971,
+      "reason": "Exceeds KRS design gross capacity (49.452 TMC)"
+    },
+    {
+      "row_index": 7716,
+      "monitoring_date": "16-02-2011 12:02:00",
+      "column": "gross_capacity_tmc",
+      "observed_value": 68.631,
+      "reason": "Exceeds KRS design gross capacity (49.452 TMC)"
+    }
+  ],
+  "data_age_days": 15,
+  "freshness_status": "HISTORICAL_ARCHIVE",
+  "generated_at": "2026-11-05T15:18:13.819736+00:00"
+}

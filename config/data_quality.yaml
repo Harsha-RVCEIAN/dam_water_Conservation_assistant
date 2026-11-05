@@ -1,0 +1,19 @@
+thresholds:
+  level_ft:
+    max_plausible: 2500.0
+    full_reservoir_level: 2482.0
+    min_plausible: 2350.0
+  storage_tmc:
+    design_gross_reference: 49.452
+    flag_threshold: 49.452
+  flow_cusecs:
+    min_plausible: 0.0
+    historical_max_inflow: 204200.0
+  rainfall_mm:
+    min_plausible: 0.0
+
+policy:
+  missing_values: "preserve_nan"  # Never silently fill missing physical readings with zero
+  negative_flows: "flag_invalid"
+  high_storage_action: "flag_and_preserve"  # Never clip or delete high readings
+

@@ -7,6 +7,20 @@ stages:
     outs:
       - reports/data_validation_report.md:
           cache: false
+      - reports/data_quality_report.csv:
+          cache: false
+      - reports/data_quality_summary.json:
+          cache: false
+
+  validate_conversions:
+    cmd: .\.venv\Scripts\python.exe -m src.utils.validate_conversions
+    deps:
+      - data/raw/krs_dam_dataset.csv
+      - src/utils/unit_conversions.py
+      - src/utils/validate_conversions.py
+    outs:
+      - reports/unit_conversion_validation.csv:
+          cache: false
 
   explore:
     cmd: .\.venv\Scripts\python.exe -m src.data.explore
@@ -22,6 +36,7 @@ stages:
     deps:
       - data/raw/krs_dam_dataset.csv
       - src/data/preprocess.py
+      - src/utils/unit_conversions.py
     outs:
       - data/processed/krs_dam_processed.csv
 

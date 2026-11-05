@@ -19,9 +19,9 @@ from src.data.validate import (
     normalize_dataframe_columns,
     parse_monitoring_dates,
 )
+from src.utils.unit_conversions import cusecs_to_tmc
 
 PROCESSED_DATA_PATH = Path("data/processed/krs_dam_processed.csv")
-CUSEC_DAY_TO_TMC = 0.0000864  # Exact daily volume conversion: 86400 cu ft / 10^9
 
 
 def load_and_normalize(raw_path: Path = RAW_DATA_PATH) -> pd.DataFrame:
@@ -46,53 +46,65 @@ def add_hydrological_features(df: pd.DataFrame) -> pd.DataFrame:
     """Calculate derived volumes, consistent percentage full, and water balance terms."""
     df = df.copy()
 
-    # Consistent percentage full derived from actual Gross Capacity and constant Design Gross Capacity
-    # Matches the formula verified on mid-2019+ data: (Gross / Design Gross) * 100
+    # Derived percentage full against historical design gross capacity reference (49.452 TMC)
+    # Note: operational live capacity denominator remains unverified
     df["percentage_full_calculated"] = (
         df["gross_capacity_tmc"] / df["design_gross_capacity_tmc"]
     ) * 100.0
 
-    # Retain original percentage_full, but provide a verified continuous column
+    # Retain original percentage_full, providing a continuous reference column
     df["percentage_full_continuous"] = df["percentage_full"].fillna(
         df["percentage_full_calculated"]
     )
 
-    # Daily flow volumes in TMC
-    df["inflow_vol_tmc"] = df["inflow_cusecs"] * CUSEC_DAY_TO_TMC
-    df["outflow_vol_tmc"] = df["outflow_cusecs"] * CUSEC_DAY_TO_TMC
-    df["withdrawal_vol_tmc"] = df["withdrawal_cusecs"] * CUSEC_DAY_TO_TMC
-    df["evaporation_vol_tmc"] = df["evaporation_cusecs"] * CUSEC_DAY_TO_TMC
+    # Daily flow volumes in TMC using pure unit conversions
+    df["inflow_vol_tmc"] = cusecs_to_tmc(df["inflow_cusecs"], hours=24.0)
+    df["outflow_vol_tmc"] = cusecs_to_tmc(df["outflow_cusecs"], hours=24.0)
+    df["withdrawal_vol_tmc"] = cusecs_to_tmc(df["withdrawal_cusecs"], hours=24.0)
+    # Evaporation: missing values remain NaN (never zeroed)
+    df["evaporation_vol_tmc"] = cusecs_to_tmc(df["evaporation_cusecs"], hours=24.0)
 
-    # Net flow volume: Inflow - Outflow - Withdrawal - Evaporation (evaporation nulls treated as 0 for balance)
-    evap_vol_filled = df["evaporation_vol_tmc"].fillna(0.0)
+    # Net flow volume in TMC: Inflow - Outflow - Withdrawal - Evaporation
+    # If evaporation is missing, complete net flow is NaN (honest about completeness)
     df["net_flow_tmc"] = (
         df["inflow_vol_tmc"]
         - df["outflow_vol_tmc"]
         - df["withdrawal_vol_tmc"]
-        - evap_vol_filled
+        - df["evaporation_vol_tmc"]
     )
 
-    # Actual daily storage change observed in Gross Capacity
-    df["storage_change_tmc"] = df["gross_capacity_tmc"].diff()
+    # Diagnostic net flow excluding evaporation (for engineering diagnostics)
+    df["diagnostic_net_flow_ex_evap_tmc"] = (
+        df["inflow_vol_tmc"]
+        - df["outflow_vol_tmc"]
+        - df["withdrawal_vol_tmc"]
+    )
+
+    # Actual daily storage change observed: enforce consecutive 1-day interval
+    # Across calendar gaps (e.g. 2020-02-11), elapsed_days > 1, so storage_change is set to NaN
+    elapsed_days = df["calendar_date"].diff().dt.total_seconds() / 86400.0
+    raw_storage_diff = df["gross_capacity_tmc"].diff()
+    df["storage_change_tmc"] = np.where(elapsed_days == 1.0, raw_storage_diff, np.nan)
 
     # Discrepancy between actual change and net flow balance
     df["balance_discrepancy_tmc"] = df["storage_change_tmc"] - df["net_flow_tmc"]
+    df["diagnostic_balance_discrepancy_tmc"] = df["storage_change_tmc"] - df["diagnostic_net_flow_ex_evap_tmc"]
 
     # Anomaly flags
     # 1. Level anomaly: FRL is ~2482 ft MSL. Any level > 2500 ft is flagged.
     df["is_level_anomalous"] = df["reservoir_level_ft"] > 2500.0
 
-    # Cleaned reservoir level (interpolating only the single known transcription typo, leaving others untouched)
+    # Cleaned reservoir level (interpolating only the single known transcription typo for visual plotting only)
     df["reservoir_level_ft_clean"] = df["reservoir_level_ft"].copy()
     anom_mask = df["is_level_anomalous"]
     if anom_mask.any():
-        # Replace anomalous levels with linear interpolation between adjacent days
         df.loc[anom_mask, "reservoir_level_ft_clean"] = np.nan
         df["reservoir_level_ft_clean"] = df["reservoir_level_ft_clean"].interpolate(method="linear")
 
     # 2. Water balance anomaly flag (|discrepancy| > 5.0 TMC)
-    # Serves as an operational review flag, NOT proof of leakage
-    df["is_balance_anomalous"] = df["balance_discrepancy_tmc"].abs() > 5.0
+    # Serves as an operational review flag, NOT proof of leakage.
+    # Incomplete intervals (NaN discrepancy) are never marked anomalous.
+    df["is_balance_anomalous"] = df["balance_discrepancy_tmc"].abs().gt(5.0).fillna(False)
 
     # Calendar features
     df["year"] = df["calendar_date"].dt.year
