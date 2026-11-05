@@ -1,5 +1,6 @@
 # Exploratory Data Analysis: K.R.Sagara Dam Hydrology
 
+- **Analysis Input:** data\raw\krs_dam_dataset.csv
 - **Dataset Period:** 1990-01-01 to 2026-10-21 (13,442 observations)
 - **Basin / Reservoir:** Cauvery Basin / K.R.Sagara Dam (Karnataka, India)
 - **Design Gross Capacity:** 49.452 TMC

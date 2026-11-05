@@ -254,3 +254,17 @@ def audit_historical_water_balance(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     audit_df.to_csv(output_path, index=False)
     return audit_df
+
+
+if __name__ == "__main__":
+    processed_path = Path("data/processed/krs_dam_processed.csv")
+    if not processed_path.exists():
+        raw_path = Path("data/raw/krs_dam_dataset.csv")
+        from src.data.preprocess import load_and_normalize
+        df = load_and_normalize(raw_path)
+    else:
+        df = pd.read_csv(processed_path)
+    print("Running historical water balance audit...")
+    audit_historical_water_balance(df)
+    print(f"Water balance audit saved to {AUDIT_REPORT_PATH}")
+

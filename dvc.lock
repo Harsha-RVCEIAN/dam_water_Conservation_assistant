@@ -112,3 +112,147 @@ stages:
       hash: md5
       md5: 3c370045d197851aa39099232f567ad4
       size: 1930
+  preprocess:
+    cmd: python -m src.data.preprocess
+    deps:
+    - path: data/raw/krs_dam_dataset.csv
+      hash: md5
+      md5: c872f414f484096a8a577dd2064b5b02
+      size: 2089235
+    - path: src/data/preprocess.py
+      hash: md5
+      md5: 48dde49b3229e1c1ddb5793088777b80
+      size: 8426
+    - path: src/utils/unit_conversions.py
+      hash: md5
+      md5: 65b4924065a53ee69a8d315f5f99047f
+      size: 3324
+    outs:
+    - path: data/processed/krs_dam_processed.csv
+      hash: md5
+      md5: cb5b6079e30e199d39fe69949e544c4b
+      size: 9121053
+  train:
+    cmd: python -m src.models.train
+    deps:
+    - path: data/processed/krs_dam_processed.csv
+      hash: md5
+      md5: cb5b6079e30e199d39fe69949e544c4b
+      size: 9121053
+    - path: src/models/train.py
+      hash: md5
+      md5: 5a3db13aa5bb8b1eb90edcedfb67fd86
+      size: 34123
+    outs:
+    - path: models/inflow_forecaster.joblib
+      hash: md5
+      md5: 0a93971ffe6e20bf367244fc746508a1
+      size: 3966615
+    - path: models/model_metadata.json
+      hash: md5
+      md5: 1fca9989ea6337744900f4305b1d070d
+      size: 5002
+    - path: reports/model_comparison_report.csv
+      hash: md5
+      md5: 0c9f833fd50fe1f110eb3f9d254864b0
+      size: 564
+    - path: reports/model_evaluation_report.md
+      hash: md5
+      md5: 267fa8d1662b5ec9949b55458ff43dd7
+      size: 6656
+  validate:
+    cmd: python -m src.data.validate
+    deps:
+    - path: config/data_quality.yaml
+      hash: md5
+      md5: 5bd19367b61354fa3ee4298624e98932
+      size: 514
+    - path: config/reservoir_reference.yaml
+      hash: md5
+      md5: 47079b20aad9de71244c2bc775146132
+      size: 1196
+    - path: data/raw/krs_dam_dataset.csv
+      hash: md5
+      md5: c872f414f484096a8a577dd2064b5b02
+      size: 2089235
+    - path: src/data/validate.py
+      hash: md5
+      md5: d9c3e397e6c3d17be730aa9326746901
+      size: 18794
+    outs:
+    - path: reports/data_quality_report.csv
+      hash: md5
+      md5: 170379fa7019dfff1af5204792786ef1
+      size: 1358
+    - path: reports/data_quality_summary.json
+      hash: md5
+      md5: bf071ff69767394d44fdb88f668b24ea
+      size: 4586
+    - path: reports/data_validation_report.md
+      hash: md5
+      md5: 81b7de3c7fb579eaefcad0a4f49b6f58
+      size: 4816
+  validate_conversions:
+    cmd: python -m src.utils.validate_conversions
+    deps:
+    - path: data/raw/krs_dam_dataset.csv
+      hash: md5
+      md5: c872f414f484096a8a577dd2064b5b02
+      size: 2089235
+    - path: src/utils/unit_conversions.py
+      hash: md5
+      md5: 65b4924065a53ee69a8d315f5f99047f
+      size: 3324
+    - path: src/utils/validate_conversions.py
+      hash: md5
+      md5: 90adb9e1420d6788267cf74837c41ba4
+      size: 3813
+    outs:
+    - path: reports/unit_conversion_validation.csv
+      hash: md5
+      md5: a7a794d4e2fc55efb86ebb7b2dd08287
+      size: 951
+  explore:
+    cmd: python -m src.data.explore
+    deps:
+    - path: data/raw/krs_dam_dataset.csv
+      hash: md5
+      md5: c872f414f484096a8a577dd2064b5b02
+      size: 2089235
+    - path: src/data/explore.py
+      hash: md5
+      md5: 274354a09b83bfb952a05cc9f3a65fd0
+      size: 9534
+    outs:
+    - path: reports/eda_summary.md
+      hash: md5
+      md5: 45cb822c4a06f8cdc007895842859518
+      size: 3029
+  water_balance:
+    cmd: python -m src.models.water_balance
+    deps:
+    - path: config/reservoir_reference.yaml
+      hash: md5
+      md5: 47079b20aad9de71244c2bc775146132
+      size: 1196
+    - path: config/water_balance.yaml
+      hash: md5
+      md5: bca2811421c8da90a88fcac94caa2f25
+      size: 621
+    - path: data/processed/krs_dam_processed.csv
+      hash: md5
+      md5: cb5b6079e30e199d39fe69949e544c4b
+      size: 9121053
+    - path: src/models/water_balance.py
+      hash: md5
+      md5: 74bb53f5290cb91890c4392516d598bc
+      size: 11748
+    - path: src/utils/unit_conversions.py
+      hash: md5
+      md5: 65b4924065a53ee69a8d315f5f99047f
+      size: 3324
+    outs:
+    - path: reports/water_balance_audit.csv
+      hash: md5
+      md5: 5fdbc1f9057af1d096eb2cf77067d5c0
+      size: 2122610
