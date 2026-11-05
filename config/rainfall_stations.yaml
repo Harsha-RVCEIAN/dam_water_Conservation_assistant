@@ -1,14 +1,65 @@
 rainfall_pipeline:
   status: "BLOCKED_EXTERNAL_SOURCE_ABSENT"
   reason: "Raw rainfall dataset and station archives are absent from the repository; no source CSVs or API credentials provided."
+  selection_method: "district_text_filter"
+  selection_basis: "regional_proxy_not_verified_catchment"
+  catchment_polygon_used: false
+  provider_confirmed: false
+  data_source_provider: null
+  
   proxy_district_selection:
     kodagu_stations: 3
     mysuru_stations: 4
     hassan_stations: 3
     mandya_stations: 0
+
+  stations:
+    - code: "KC2IIMYS1009"
+      name: "Harangi"
+      district: "Kodagu"
+      role: "regional_proxy"
+    - code: "KC2IIMYS1018"
+      name: "Kushalnagar"
+      district: "Kodagu"
+      role: "regional_proxy"
+    - code: "KC2IIMYS1036"
+      name: "Somwarpet"
+      district: "Kodagu"
+      role: "regional_proxy"
+    - code: "KC2IIMYS1012"
+      name: "Hunsur"
+      district: "Mysuru"
+      role: "regional_proxy"
+    - code: "KC2IIMYS1028"
+      name: "Periyapatna"
+      district: "Mysuru"
+      role: "regional_proxy"
+    - code: "KC2IIMYS1000"
+      name: "Bettadapura"
+      district: "Mysuru"
+      role: "regional_proxy"
+    - code: "KC2IIMYS1016"
+      name: "K.R.Nagar"
+      district: "Mysuru"
+      role: "regional_proxy"
+    - code: "KC1GHSN575"
+      name: "Gorur"
+      district: "Hassan"
+      role: "regional_proxy"
+    - code: "KC1GHSN566"
+      name: "C.R.Patna"
+      district: "Hassan"
+      role: "regional_proxy"
+    - code: "KC1GHSN561"
+      name: "Basavapatna"
+      district: "Hassan"
+      role: "regional_proxy"
+
   aggregation:
     method: "unweighted_daily_mean"
     naming: "regional_mean_rainfall_mm"
     zero_treatment: "zero_is_valid_observation_not_missing"
     missing_treatment: "no_reporting_remains_nan"
-
+    notes: >
+      Mandya district stations intentionally omitted (0 stations) to avoid biasing
+      the upstream runoff proxy with downstream irrigation plain measurements.

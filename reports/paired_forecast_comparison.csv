@@ -1,0 +1,12 @@
+model_family,model_variant,dataset_context,eval_date_range,eval_samples,mae_cfs,rmse_cfs,r2_score,wape_pct,status
+Persistence,lag_1_baseline,dam_only_standalone,2024-01-01 to 2024-10-21,295,2278.40,6685.56,0.5820,38.12,PROD_CHAMPION_BASELINE
+Tuned Random Forest,dam_features_v1,dam_only_standalone,2024-01-01 to 2024-10-21,295,2347.07,5929.95,0.6718,39.27,PROD_CHAMPION_LEARNED
+Persistence,rainfall_lag_1,rainfall_separate_split,2025-01-01 to 2025-12-31,365,3324.53,8611.80,0.4183,49.20,HISTORICAL_EXPERIMENT_NONPAIRED
+7-Day Moving Avg,rainfall_mavg_7d,rainfall_separate_split,2025-01-01 to 2025-12-31,365,4211.91,9318.67,0.3189,62.34,HISTORICAL_EXPERIMENT_NONPAIRED
+Seasonal Naive,day_of_year_prior,rainfall_separate_split,2025-01-01 to 2025-12-31,365,4853.78,10917.42,0.0652,71.84,HISTORICAL_EXPERIMENT_NONPAIRED
+Ridge Regression,rainfall_alpha_tuned,rainfall_separate_split,2025-01-01 to 2025-12-31,365,2810.72,6567.14,0.6617,41.60,HISTORICAL_EXPERIMENT_NONPAIRED
+Random Forest,rainfall_rf_default,rainfall_separate_split,2025-01-01 to 2025-12-31,365,2780.22,6344.82,0.6843,41.15,HISTORICAL_EXPERIMENT_NONPAIRED
+HistGradientBoosting,rainfall_hgb_default,rainfall_separate_split,2025-01-01 to 2025-12-31,365,2706.55,6091.76,0.7089,40.06,HISTORICAL_EXPERIMENT_NONPAIRED
+Tuned Random Forest,rainfall_rf_tuned,rainfall_separate_split,2025-01-01 to 2025-12-31,365,2601.25,5934.02,0.7238,38.50,HISTORICAL_EXPERIMENT_NONPAIRED
+Paired Comparison Framework,dam_vs_rainfall_paired,common_evaluation_window,BLOCKED,0,null,null,null,null,BLOCKED_PENDING_REAL_RAINFALL
+

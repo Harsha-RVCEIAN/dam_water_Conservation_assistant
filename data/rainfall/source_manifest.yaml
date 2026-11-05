@@ -1,0 +1,42 @@
+# Rainfall Source Manifest (Specification & Template)
+# Schema compliant with Antigravity Implementation Contract Section 4.4
+
+manifest_version: "1.0.0"
+status: "BLOCKED_PENDING_OWNER_PROVENANCE"
+
+provider: null
+provider_category: "meteorological_hydromet"
+source_url_or_delivery_method: null
+licence: null
+retrieval_timestamp_utc: null
+retrieval_command_or_query: null
+
+source_file_names: []
+file_sha256: []
+
+variable: "daily_rainfall"
+units: "mm"
+accumulation_period: "24h"
+timezone: "Asia/Kolkata (UTC+05:30)"
+
+missing_value_codes:
+  - -999.0
+  - -999.9
+  - "NA"
+  - ""
+
+quality_flag_policy: "preserve_source_flags_reject_negative"
+
+station_metadata_source: "data/interim/selected_rainfall_stations.csv"
+date_min: null
+date_max: null
+
+retrieval_notes: >
+  Template and schema contract for KRS catchment rainfall data ingestion.
+  Requires owner confirmation of data source provider, terms of use, and
+  actual raw data files placed into data/raw/rainfall/ before execution.
+
+credential_env_vars:
+  - "RAINFALL_SOURCE_API_KEY"
+  - "RAINFALL_REMOTE_TOKEN"
+

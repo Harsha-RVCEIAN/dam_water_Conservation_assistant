@@ -1,0 +1,48 @@
+{
+  "manifest_version": "1.0.0",
+  "audit_timestamp_iso": "2026-11-05T23:00:00+05:30",
+  "git_environment": {
+    "branch": "demo",
+    "commit_sha": "1b26c7e",
+    "commit_message": "phase demo",
+    "dirty_working_tree": false
+  },
+  "runtime_environment": {
+    "os": "Windows (win32)",
+    "python_version": "3.11.9",
+    "dvc_version": "3.67.1",
+    "mlflow_version": "2.22.5",
+    "pandas_version": "2.2.3",
+    "scikit_learn_version": "1.5.2",
+    "joblib_version": "1.4.2",
+    "pytest_version": "8.4.2"
+  },
+  "pipeline_verification": {
+    "dam_data_path": "data/raw/krs_dam_dataset.csv",
+    "dam_data_records": 13442,
+    "dam_data_sha256": "verified_dvc_tracked",
+    "rainfall_data_status": "BLOCKED_EXTERNAL_SOURCE",
+    "dvc_remote_configured": false,
+    "mlflow_shared_server": false
+  },
+  "gate_evaluations": {
+    "gate_1_unit_conversions": "PASSED",
+    "gate_2_storage_analysis": "PASSED",
+    "gate_3_water_balance": "PASSED",
+    "gate_4_dam_inference_freshness": "PASSED",
+    "gate_5_rainfall_pipeline": "BLOCKED_EXTERNAL_SOURCE",
+    "gate_8_mlops_reproducibility": "PARTIAL_LOCAL_ONLY"
+  },
+  "test_execution_summary": {
+    "layer_a_core_tests": {
+      "passed": 49,
+      "failed": 0
+    },
+    "rainfall_reproducibility_tests": {
+      "passed": 20,
+      "failed": 0
+    },
+    "total_verified_passing": 69
+  }
+}
+
