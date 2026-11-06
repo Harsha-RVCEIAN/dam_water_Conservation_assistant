@@ -892,7 +892,11 @@ def main() -> None:
 
         diag_res_val = None
         if wb_calc is not None:
-            diag_res_val = wb_calc.diagnostic_residual_excluding_evap_tmc
+            diag_res_val = getattr(
+                wb_calc,
+                "diagnostic_discrepancy_excluding_evap_tmc",
+                getattr(wb_calc, "diagnostic_residual_excluding_evap_tmc", None),
+            )
 
         ai_res = generate_ai_conservation_briefing(
             condition=cond_assessment,
@@ -908,9 +912,9 @@ def main() -> None:
         )
 
         with st.container():
-            source_badge = "Google Gemini 2.5 Flash" if ai_res.get("source") == "gemini" else "Deterministic Synthesis Engine"
-            st.markdown(f"**Briefing Engine:** `{source_badge}` &middot; Model: `{ai_res.get('model', 'rule-synthesis')}`")
-            st.markdown(ai_res.get("briefing", ""))
+            source_badge = "Google Gemini (gemini-3.5-flash-lite)" if ai_res.get("source") == "gemini" else "Deterministic Synthesis Engine"
+            st.markdown(f"**Briefing Engine:** `{source_badge}` &middot; Status: `{ai_res.get('status', 'complete')}`")
+            st.markdown(ai_res.get("briefing_markdown", ai_res.get("briefing", "")))
 
 if __name__ == "__main__":
     main()

@@ -23,16 +23,12 @@ from src.models.conservation_recommender import ConservationRecommendation
 from src.models.water_budget import ConservationScenarioResult
 
 
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent"
 
 
 def get_gemini_api_key() -> str:
-    """Read Gemini API key from environment or local .env file."""
-    key = os.environ.get("GEMINI_API_KEY", "").strip()
-    if key:
-        return key
-
-    # Look for .env in repository root
+    """Read Gemini API key from local .env file or environment."""
+    # Prioritize project-level .env file
     env_path = Path(__file__).resolve().parents[2] / ".env"
     if env_path.is_file():
         try:
@@ -45,7 +41,9 @@ def get_gemini_api_key() -> str:
                             return val
         except Exception:
             pass
-    return ""
+
+    # Fallback to system environment variable
+    return os.environ.get("GEMINI_API_KEY", "").strip()
 
 
 def is_gemini_configured() -> bool:
@@ -207,6 +205,7 @@ Simulating a **{top_sc.reduction_percentage:.0f}%** canal withdrawal reduction o
         "status": "deterministic_fallback",
         "model_used": "Deterministic Rule-Based Synthesizer",
         "briefing_markdown": markdown_output,
+        "briefing": markdown_output,
         "is_ai_generated": False,
     }
 
@@ -303,8 +302,10 @@ def generate_ai_conservation_briefing(
                     ai_text = parts[0]["text"]
                     return {
                         "status": "success",
-                        "model_used": "Google Gemini (gemini-2.5-flash)",
+                        "model_used": "Google Gemini (gemini-3.5-flash-lite)",
                         "briefing_markdown": ai_text,
+                        "briefing": ai_text,
+                        "source": "gemini",
                         "is_ai_generated": True,
                     }
 
