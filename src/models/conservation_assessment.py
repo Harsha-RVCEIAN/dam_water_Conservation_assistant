@@ -105,6 +105,72 @@ def _calculate_trend(series: pd.Series, tolerance_pct: float = 0.05) -> str:
     return "STEADY"
 
 
+def _count_consecutive_storage_declines(
+    df_slice: pd.DataFrame,
+    storage_basis: str,
+) -> int:
+    """Count consecutive calendar-day storage declines ending at the latest observation.
+
+    Stops when:
+    - A date is missing in the daily sequence.
+    - There is a calendar-day gap greater than 1 day.
+    - Storage increases or remains unchanged.
+    - Storage reading is missing, negative, NaN, or non-finite.
+    """
+    if df_slice.empty or storage_basis not in df_slice.columns:
+        return 0
+
+    clean_slice = df_slice.dropna(subset=["calendar_date"]).copy()
+    clean_slice["calendar_date"] = pd.to_datetime(
+        clean_slice["calendar_date"]
+    ).dt.normalize()
+    clean_slice = clean_slice.sort_values("calendar_date")
+
+    date_to_val: Dict[pd.Timestamp, float] = {}
+    for _, row in clean_slice.iterrows():
+        val = row[storage_basis]
+        if pd.notna(val):
+            try:
+                num = float(val)
+                if np.isfinite(num) and num >= 0:
+                    date_to_val[row["calendar_date"]] = num
+                else:
+                    date_to_val[row["calendar_date"]] = np.nan
+            except (TypeError, ValueError):
+                date_to_val[row["calendar_date"]] = np.nan
+        else:
+            date_to_val[row["calendar_date"]] = np.nan
+
+    valid_dates = [d for d, v in date_to_val.items() if not pd.isna(v)]
+    if not valid_dates:
+        return 0
+
+    latest_meas_date = max(valid_dates)
+    latest_record_date = clean_slice.iloc[-1]["calendar_date"]
+
+    # If the latest record date has missing storage, decline is stopped
+    if (latest_record_date - latest_meas_date).days > 0:
+        return 0
+
+    consecutive = 0
+    current_dt = latest_meas_date
+
+    while True:
+        prev_dt = current_dt - pd.Timedelta(days=1)
+        if prev_dt not in date_to_val:
+            break
+        prev_val = date_to_val[prev_dt]
+        curr_val = date_to_val[current_dt]
+        if pd.isna(prev_val) or pd.isna(curr_val):
+            break
+        if curr_val >= prev_val:
+            break
+        consecutive += 1
+        current_dt = prev_dt
+
+    return consecutive
+
+
 def assess_reservoir_condition(
     df: pd.DataFrame,
     as_of_date: Optional[str] = None,
@@ -228,42 +294,39 @@ def assess_reservoir_condition(
             f"Latest storage value is from {storage_meas_date}, while latest dataset record is {obs_date}."
         )
 
-    # Count consecutive storage decline days
-    valid_storage_rows = valid_storage_rows.sort_values("calendar_date")
-
-    consecutive_declines = 0
-
-    for i in range(len(valid_storage_rows) - 1, 0, -1):
-
-        current = valid_storage_rows.iloc[i]
-        previous = valid_storage_rows.iloc[i - 1]
-
-        date_gap = (
-            current["calendar_date"] - previous["calendar_date"]
-        ).days
-
-        storage_change = (
-            current[storage_basis] - previous[storage_basis]
-        )
-
-        if date_gap != 1 or storage_change >= 0:
-            break
-
-        consecutive_declines += 1
+    # Count consecutive storage decline days using strict calendar days
+    consecutive_declines = _count_consecutive_storage_declines(
+        recent_slice, storage_basis
+    )
 
     # Trends
+    valid_storage_series = valid_storage_series.apply(
+        lambda x: float(x) if pd.notna(x) and np.isfinite(float(x)) and float(x) >= 0 else np.nan
+    )
     s_trend = _calculate_trend(valid_storage_series)
     inflow_col = "inflow_cusecs" if "inflow_cusecs" in recent_slice.columns else "inflow_cfs"
     outflow_col = "outflow_cusecs" if "outflow_cusecs" in recent_slice.columns else "outflow_cfs"
     withdrawal_col = "withdrawal_cusecs" if "withdrawal_cusecs" in recent_slice.columns else "withdrawal_cfs"
+
+    def _mean_flow(col_name: str) -> Optional[float]:
+        if col_name not in recent_slice.columns:
+            return None
+        s = pd.to_numeric(recent_slice[col_name], errors="coerce")
+        s_valid = s[s.notna() & np.isfinite(s) & (s >= 0)]
+        return float(s_valid.mean()) if not s_valid.empty else None
+
+    mean_inflow = _mean_flow(inflow_col)
+    mean_withdrawal = _mean_flow(withdrawal_col)
 
     inflow_trend = _calculate_trend(recent_slice[inflow_col]) if inflow_col in recent_slice.columns else "UNKNOWN"
     outflow_trend = _calculate_trend(recent_slice[outflow_col]) if outflow_col in recent_slice.columns else "UNKNOWN"
     withdrawal_trend = _calculate_trend(recent_slice[withdrawal_col]) if withdrawal_col in recent_slice.columns else "UNKNOWN"
 
     # Condition determination using high_tmc, watch_tmc, and low_tmc
-    if latest_storage is None:
+    if latest_storage is None or not np.isfinite(latest_storage) or latest_storage < 0:
         condition = "INSUFFICIENT_DATA"
+        latest_storage = None
+        limitations.append("Latest storage measurement is negative, non-finite, or missing.")
     elif latest_storage <= low_tmc:
         condition = "HIGH_RISK"
     elif latest_storage <= watch_tmc:
@@ -279,8 +342,8 @@ def assess_reservoir_condition(
         "recent_window_days": len(recent_slice),
         "valid_storage_count": valid_count,
         "consecutive_storage_decline_days": consecutive_declines,
-        "mean_inflow_cusecs": float(recent_slice[inflow_col].mean()) if inflow_col in recent_slice.columns else None,
-        "mean_withdrawal_cusecs": float(recent_slice[withdrawal_col].mean()) if withdrawal_col in recent_slice.columns else None,
+        "mean_inflow_cusecs": mean_inflow,
+        "mean_withdrawal_cusecs": mean_withdrawal,
     }
 
     return ReservoirConditionAssessment(
@@ -461,250 +524,240 @@ def detect_abnormal_flow_patterns(
     return flags
 
 
-    def assess_water_shortage_risk(
-        condition: ReservoirConditionAssessment,
-        inflow_forecast_cfs: Optional[float] = None,
-        forecast_target_date: Optional[str] = None,
-        config: Optional[Dict[str, Any]] = None,
-    ) -> ShortageRiskAssessment:
-        """
-        Assess potential water-shortage risk using available reservoir evidence.
+def assess_water_shortage_risk(
+    condition: ReservoirConditionAssessment,
+    inflow_forecast_cfs: Optional[float] = None,
+    forecast_target_date: Optional[str] = None,
+    config: Optional[Dict[str, Any]] = None,
+) -> ShortageRiskAssessment:
+    """
+    Assess potential water-shortage risk using available reservoir evidence.
 
-        Uses:
-        - Provisional storage condition
-        - Consecutive calendar-day storage declines
-        - Recent withdrawal-to-inflow ratio
-        - Optional one-day inflow forecast
+    Uses:
+    - Provisional storage condition
+    - Consecutive calendar-day storage declines
+    - Recent withdrawal-to-inflow ratio
+    - Optional one-day inflow forecast
 
-        This is an advisory screening tool, not an official shortage declaration.
-        """
+    This is an advisory screening tool, not an official shortage declaration.
+    """
+    if config is None:
+        config = _load_config()
 
-        if config is None:
-            config = _load_config()
+    cfg_risk = config.get("risk_assessment", {})
+    cfg_assessment = config.get("assessment", {})
 
-        cfg_risk = config.get("risk_assessment", {})
-        cfg_assessment = config.get("assessment", {})
+    ratio_high_thresh = float(
+        cfg_risk.get("withdrawal_to_inflow_ratio_high", 1.5)
+    )
+    decline_days_thresh = int(
+        cfg_risk.get("consecutive_storage_decline_days", 3)
+    )
+    low_inflow_ref = float(
+        cfg_assessment.get("inflow_provisional_low_cusecs", 1500.0)
+    )
 
-        ratio_high_thresh = float(
-            cfg_risk.get("withdrawal_to_inflow_ratio_high", 1.5)
-        )
-        decline_days_thresh = int(
-            cfg_risk.get("consecutive_storage_decline_days", 3)
-        )
-        low_inflow_ref = float(
-            cfg_assessment.get("inflow_provisional_low_cusecs", 1500.0)
-        )
+    limitations = [
+        "Advisory screening only; does not constitute an official drought or water-shortage declaration.",
+        "A one-day inflow forecast informs only the next-day transition and does not predict multi-week water availability.",
+        "Storage thresholds are provisional and must not be interpreted as official reservoir operating levels.",
+    ]
 
-        limitations = [
-            "Advisory screening only; does not constitute an official drought or water-shortage declaration.",
-            "A one-day inflow forecast informs only the next-day transition and does not predict multi-week water availability.",
-            "Storage thresholds are provisional and must not be interpreted as official reservoir operating levels.",
-        ]
+    # Validate configuration
+    if (
+        not np.isfinite(ratio_high_thresh)
+        or ratio_high_thresh <= 0
+        or decline_days_thresh < 1
+        or not np.isfinite(low_inflow_ref)
+        or low_inflow_ref < 0
+    ):
+        raise ValueError("Invalid shortage-risk configuration values.")
 
-        # Validate configuration
-        if (
-            not np.isfinite(ratio_high_thresh)
-            or ratio_high_thresh <= 0
-            or decline_days_thresh < 1
-            or not np.isfinite(low_inflow_ref)
-            or low_inflow_ref < 0
-        ):
-            raise ValueError("Invalid shortage-risk configuration values.")
-
-        # Insufficient historical data
-        if condition.condition == "INSUFFICIENT_DATA":
-            return ShortageRiskAssessment(
-                risk_level="INSUFFICIENT_DATA",
-                risk_reasons=[
-                    "Baseline reservoir condition cannot be established due to insufficient data."
-                ],
-                supporting_metrics={},
-                suggested_review_action=(
-                    "Verify and update reservoir observations before performing shortage-risk screening."
-                ),
-                data_quality_status="INCOMPLETE",
-                limitations=limitations,
-            )
-
-        # Do not present stale data as current risk.
-        stale_statuses = {"STALE", "HISTORICAL_ARCHIVE"}
-
-        if condition.data_freshness in stale_statuses:
-            limitations.append(
-                f"Assessment reflects historical observations as of "
-                f"{condition.observation_date}, not the current reservoir condition."
-            )
-
-            return ShortageRiskAssessment(
-                risk_level="HISTORICAL_ONLY",
-                risk_reasons=[
-                    "Current shortage risk cannot be reliably assessed because the latest observations are stale."
-                ],
-                supporting_metrics={
-                    "observation_date": condition.observation_date,
-                    "storage_measurement_date": condition.storage_measurement_date,
-                    "storage_tmc": condition.storage_value_tmc,
-                    "data_freshness": condition.data_freshness,
-                },
-                suggested_review_action=(
-                    "Obtain updated reservoir storage and flow observations before making a current risk assessment."
-                ),
-                data_quality_status=condition.data_freshness,
-                limitations=limitations,
-            )
-
-        risk_reasons: List[str] = []
-        score = 0
-
-        # Evidence 1: Storage level
-        if condition.condition == "HIGH_RISK":
-            score += 3
-
-            if condition.storage_value_tmc is not None:
-                risk_reasons.append(
-                    f"Storage ({condition.storage_value_tmc:.2f} TMC) "
-                    "is at or below the provisional low threshold."
-                )
-            else:
-                risk_reasons.append(
-                    "Reservoir condition indicates a provisional high-risk storage level."
-                )
-
-        elif condition.condition == "WATCH":
-            score += 1
-
-            if condition.storage_value_tmc is not None:
-                risk_reasons.append(
-                    f"Storage ({condition.storage_value_tmc:.2f} TMC) "
-                    "is within the provisional watch band."
-                )
-            else:
-                risk_reasons.append(
-                    "Reservoir condition indicates a provisional storage watch level."
-                )
-
-        # Evidence 2: Consecutive calendar-day storage declines
-        consec_declines = condition.evidence.get(
-            "consecutive_storage_decline_days", 0
+    # Insufficient historical data
+    if condition.condition == "INSUFFICIENT_DATA":
+        return ShortageRiskAssessment(
+            risk_level="INSUFFICIENT_DATA",
+            risk_reasons=[
+                "Baseline reservoir condition cannot be established due to insufficient data."
+            ],
+            supporting_metrics={},
+            suggested_review_action=(
+                "Verify and update reservoir observations before performing shortage-risk screening."
+            ),
+            data_quality_status="INCOMPLETE",
+            limitations=limitations,
         )
 
-        try:
-            consec_declines = int(consec_declines)
-        except (TypeError, ValueError):
-            consec_declines = 0
+    # Do not present stale or unverified data as current risk.
+    stale_statuses = {"STALE", "HISTORICAL_ARCHIVE", "UNKNOWN"}
 
-        if consec_declines >= decline_days_thresh:
-            score += 1
-
-            risk_reasons.append(
-                f"Live storage has declined for {consec_declines} "
-                f"consecutive calendar days "
-                f"(configured threshold: {decline_days_thresh} days)."
-            )
-
-        elif condition.storage_trend == "DECLINING":
-            score += 1
-
-            risk_reasons.append(
-                "Live storage is exhibiting a declining trajectory across recent observations."
-            )
-
-        # Evidence 3: Withdrawal-to-inflow ratio
-        mean_inflow = condition.evidence.get("mean_inflow_cusecs")
-        mean_with = condition.evidence.get("mean_withdrawal_cusecs")
-
-        if mean_inflow is not None and mean_with is not None:
-            try:
-                mean_inflow = float(mean_inflow)
-                mean_with = float(mean_with)
-
-                if (
-                    np.isfinite(mean_inflow)
-                    and np.isfinite(mean_with)
-                    and mean_inflow > 0
-                    and mean_with >= 0
-                ):
-                    ratio = mean_with / mean_inflow
-
-                    if ratio > ratio_high_thresh:
-                        score += 1
-
-                        risk_reasons.append(
-                            f"Recent canal withdrawal is {ratio:.2f}x "
-                            "the mean inflow rate."
-                        )
-
-            except (TypeError, ValueError, ZeroDivisionError):
-                pass
-
-        # Evidence 4: Optional one-day inflow forecast
-        is_forecast_based = False
-        valid_forecast = None
-
-        if inflow_forecast_cfs is not None:
-            try:
-                candidate_forecast = float(inflow_forecast_cfs)
-
-                if (
-                    np.isfinite(candidate_forecast)
-                    and candidate_forecast >= 0
-                ):
-                    valid_forecast = candidate_forecast
-                    is_forecast_based = True
-
-            except (TypeError, ValueError):
-                valid_forecast = None
-
-        if valid_forecast is not None:
-            if valid_forecast < low_inflow_ref:
-                score += 1
-
-                risk_reasons.append(
-                    f"Next-day forecast inflow ({valid_forecast:.1f} cfs) "
-                    f"is below the provisional reference "
-                    f"({low_inflow_ref:.0f} cfs)."
-                )
-
-        # Risk classification
-        if score >= 4:
-            risk_level = "HIGH"
-            action = (
-                "Review recent storage, inflow and withdrawal trends. "
-                "Evaluate conservation scenarios with the relevant reservoir authorities."
-            )
-
-        elif score >= 2:
-            risk_level = "MEDIUM"
-            action = (
-                "Monitor updated storage and flow observations and "
-                "evaluate hypothetical withdrawal-reduction scenarios."
-            )
-
-        else:
-            risk_level = "LOW"
-            action = (
-                "Maintain regular monitoring and verify incoming reservoir observations."
-            )
+    if condition.data_freshness in stale_statuses:
+        limitations.append(
+            f"Assessment reflects historical observations as of "
+            f"{condition.observation_date}, not the current reservoir condition."
+        )
 
         return ShortageRiskAssessment(
-            risk_level=risk_level,
-            risk_reasons=risk_reasons,
+            risk_level="HISTORICAL_ONLY",
+            risk_reasons=[
+                "Current shortage risk cannot be reliably assessed because the latest observations are stale or historical archive."
+            ],
             supporting_metrics={
-                "score": score,
                 "observation_date": condition.observation_date,
                 "storage_measurement_date": condition.storage_measurement_date,
                 "storage_tmc": condition.storage_value_tmc,
-                "mean_inflow_cusecs": mean_inflow,
-                "mean_withdrawal_cusecs": mean_with,
-                "withdrawal_to_inflow_threshold": ratio_high_thresh,
-                "forecast_inflow_cfs": valid_forecast,
-                "consecutive_storage_decline_days": consec_declines,
+                "data_freshness": condition.data_freshness,
             },
-            suggested_review_action=action,
-            data_quality_status=condition.data_freshness,
-            is_forecast_based=is_forecast_based,
-            forecast_target_date=(
-                forecast_target_date if is_forecast_based else None
+            suggested_review_action=(
+                "Obtain updated reservoir storage and flow observations before making a current risk assessment."
             ),
+            data_quality_status=condition.data_freshness,
             limitations=limitations,
         )
+
+    risk_reasons: List[str] = []
+    score = 0
+
+    # Evidence 1: Storage level
+    if condition.condition == "HIGH_RISK":
+        score += 3
+        if condition.storage_value_tmc is not None:
+            risk_reasons.append(
+                f"Storage ({condition.storage_value_tmc:.2f} TMC) "
+                "is at or below the provisional low threshold."
+            )
+        else:
+            risk_reasons.append(
+                "Reservoir condition indicates a provisional high-risk storage level."
+            )
+
+    elif condition.condition == "WATCH":
+        score += 1
+        if condition.storage_value_tmc is not None:
+            risk_reasons.append(
+                f"Storage ({condition.storage_value_tmc:.2f} TMC) "
+                "is within the provisional watch band."
+            )
+        else:
+            risk_reasons.append(
+                "Reservoir condition indicates a provisional storage watch level."
+            )
+
+    # Evidence 2: Consecutive calendar-day storage declines
+    consec_declines = condition.evidence.get(
+        "consecutive_storage_decline_days", 0
+    )
+
+    try:
+        consec_declines = int(consec_declines)
+    except (TypeError, ValueError):
+        consec_declines = 0
+
+    if consec_declines >= decline_days_thresh:
+        score += 1
+        risk_reasons.append(
+            f"Live storage has declined for {consec_declines} "
+            f"consecutive calendar days "
+            f"(configured threshold: {decline_days_thresh} days)."
+        )
+
+    elif condition.storage_trend == "DECLINING":
+        score += 1
+        risk_reasons.append(
+            "Live storage is exhibiting a declining trajectory across recent observations."
+        )
+
+    # Evidence 3: Withdrawal-to-inflow ratio
+    mean_inflow = condition.evidence.get("mean_inflow_cusecs")
+    mean_with = condition.evidence.get("mean_withdrawal_cusecs")
+
+    if mean_inflow is not None and mean_with is not None:
+        try:
+            mean_inflow = float(mean_inflow)
+            mean_with = float(mean_with)
+
+            if (
+                np.isfinite(mean_inflow)
+                and np.isfinite(mean_with)
+                and mean_inflow > 0
+                and mean_with >= 0
+            ):
+                ratio = mean_with / mean_inflow
+                if ratio > ratio_high_thresh:
+                    score += 1
+                    risk_reasons.append(
+                        f"Recent canal withdrawal is {ratio:.2f}x "
+                        "the mean inflow rate."
+                    )
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
+
+    # Evidence 4: Optional one-day inflow forecast
+    is_forecast_based = False
+    valid_forecast = None
+
+    if inflow_forecast_cfs is not None:
+        try:
+            candidate_forecast = float(inflow_forecast_cfs)
+            if np.isfinite(candidate_forecast) and candidate_forecast >= 0:
+                valid_forecast = candidate_forecast
+                is_forecast_based = True
+            else:
+                limitations.append(
+                    "Forecast inflow is invalid (negative or non-finite); forecast input ignored."
+                )
+        except (TypeError, ValueError):
+            limitations.append(
+                "Forecast inflow is invalid (non-numeric); forecast input ignored."
+            )
+
+    if valid_forecast is not None:
+        if valid_forecast < low_inflow_ref:
+            score += 1
+            risk_reasons.append(
+                f"Next-day forecast inflow ({valid_forecast:.1f} cfs) "
+                f"is below the provisional reference "
+                f"({low_inflow_ref:.0f} cfs)."
+            )
+
+    # Risk classification
+    if score >= 4:
+        risk_level = "HIGH"
+        action = (
+            "Review recent storage, inflow and withdrawal trends. "
+            "Evaluate conservation scenarios with the relevant reservoir authorities."
+        )
+    elif score >= 2:
+        risk_level = "MEDIUM"
+        action = (
+            "Monitor updated storage and flow observations and "
+            "evaluate hypothetical withdrawal-reduction scenarios."
+        )
+    else:
+        risk_level = "LOW"
+        action = (
+            "Maintain regular monitoring and verify incoming reservoir observations."
+        )
+
+    return ShortageRiskAssessment(
+        risk_level=risk_level,
+        risk_reasons=risk_reasons,
+        supporting_metrics={
+            "score": score,
+            "observation_date": condition.observation_date,
+            "storage_measurement_date": condition.storage_measurement_date,
+            "storage_tmc": condition.storage_value_tmc,
+            "mean_inflow_cusecs": mean_inflow,
+            "mean_withdrawal_cusecs": mean_with,
+            "withdrawal_to_inflow_threshold": ratio_high_thresh,
+            "forecast_inflow_cfs": valid_forecast,
+            "consecutive_storage_decline_days": consec_declines,
+        },
+        suggested_review_action=action,
+        data_quality_status=condition.data_freshness,
+        is_forecast_based=is_forecast_based,
+        forecast_target_date=(
+            forecast_target_date if is_forecast_based else None
+        ),
+        limitations=limitations,
+    )

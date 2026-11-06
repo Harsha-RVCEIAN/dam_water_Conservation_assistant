@@ -71,14 +71,14 @@ class WaterBalanceResult:
     status: str
     reasons: List[str] = field(default_factory=list)
     quality_flags: List[str] = field(default_factory=list)
-    disclaimer: str = "Water-balance discrepancy is not proof of dam leakage."
+    disclaimer: str = "Water-balance discrepancy is not proof of physical dam leakage."
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
 
 def _valid_nonnegative(value: Any) -> bool:
-    if value is None:
+    if value is None or isinstance(value, bool):
         return False
     try:
         number = float(value)
@@ -127,13 +127,24 @@ def compute_water_balance_interval(
     if not expected_days_valid:
         reasons.append("invalid_expected_days")
 
+    dates_valid = False
+    elapsed_days = 0
     try:
-        start_ts = pd.to_datetime(start_date, errors="raise")
-        end_ts = pd.to_datetime(end_date, errors="raise")
-        if pd.isna(start_ts) or pd.isna(end_ts):
-            raise ValueError("Missing date")
-        elapsed_days = int((end_ts.normalize() - start_ts.normalize()).days)
-        dates_valid = elapsed_days > 0
+        if start_date is None or end_date is None:
+            reasons.append("invalid_or_missing_interval_dates")
+        else:
+            start_ts = pd.to_datetime(start_date, errors="raise")
+            end_ts = pd.to_datetime(end_date, errors="raise")
+            if pd.isna(start_ts) or pd.isna(end_ts):
+                reasons.append("invalid_or_missing_interval_dates")
+            else:
+                elapsed_days = int((end_ts.normalize() - start_ts.normalize()).days)
+                if elapsed_days == 0:
+                    reasons.append("same_start_and_end_date")
+                elif elapsed_days < 0:
+                    reasons.append("reversed_interval_dates")
+                else:
+                    dates_valid = True
     except (TypeError, ValueError, OverflowError):
         elapsed_days = 0
         dates_valid = False

@@ -1,11 +1,9 @@
-"""Streamlit dashboard for Dam Water Conservation Assistant (Layer A Stabilized).
+"""Streamlit dashboard for Dam Water Conservation Assistant (Layer A and Layer B).
 
 Provides interactive reservoir monitoring, historical hydrological trends,
 machine learning inflow forecasting with uncertainty intervals and dynamic freshness,
-statistical anomaly review flags, water-balance diagnostics, and hypothetical
-conservation scenario calculations.
-
-Scope: Layer A Technical Stabilization Only. No Layer B recommendation engine.
+statistical anomaly review flags, water-balance diagnostics, and explainable
+conservation decision support and hypothetical scenario calculations.
 """
 
 from __future__ import annotations
@@ -46,7 +44,7 @@ CONVERSION_REPORT_PATH = Path("reports/unit_conversion_validation.csv")
 WATER_BALANCE_AUDIT_PATH = Path("reports/water_balance_audit.csv")
 
 st.set_page_config(
-    page_title="K.R.Sagara Dam - Water Conservation Assistant (Layer A)",
+    page_title="KRS Dam Water Conservation Assistant – Layer A and Layer B",
     page_icon="🌊",
     layout="wide",
 )
@@ -427,8 +425,21 @@ def main() -> None:
         st.markdown(
             "Simulate hypothetical operational adjustments (e.g. canal rationing during dry spells) "
             "using consistent physical units (**TMC** and **cusecs**).  \n"
-            "*(This is a hypothetical calculation tool only; it contains no automated recommendation engine).*"
+            "*(Hypothetical decision-support calculation tool only. Advisory prototype; not connected to live dam telemetry or automated gate control.)*"
         )
+
+        # Validate presence of required inputs from latest observation
+        init_gross = latest_row.get("gross_capacity_tmc")
+        init_inflow = latest_row.get("inflow_cusecs")
+        init_outflow = latest_row.get("outflow_cusecs")
+        init_with = latest_row.get("withdrawal_cusecs")
+
+        def _as_finite_nonnegative(val, default=0.0):
+            try:
+                num = float(val)
+                return num if np.isfinite(num) and num >= 0 else default
+            except (TypeError, ValueError):
+                return default
 
         col_s1, col_s2 = st.columns(2)
         with col_s1:
@@ -439,7 +450,7 @@ def main() -> None:
                 "Starting Gross Storage (TMC)",
                 min_value=0.0,
                 max_value=float(KRS_DESIGN_GROSS_CAPACITY_TMC),
-                value=float(round(latest_row["gross_capacity_tmc"], 2)),
+                value=float(round(_as_finite_nonnegative(init_gross, 25.0), 2)),
             )
 
         with col_s2:
@@ -447,37 +458,46 @@ def main() -> None:
             sim_inflow = st.number_input(
                 "Assumed Inflow Rate (cusecs)",
                 min_value=0.0,
-                value=float(round(latest_row["inflow_cusecs"], 0)),
+                value=float(round(_as_finite_nonnegative(init_inflow, 1000.0), 0)),
             )
             sim_outflow = st.number_input(
                 "Assumed River Outflow Rate (cusecs)",
                 min_value=0.0,
-                value=float(round(latest_row["outflow_cusecs"], 0)),
+                value=float(round(_as_finite_nonnegative(init_outflow, 500.0), 0)),
             )
             sim_withdrawal = st.number_input(
                 "Baseline Canal Withdrawal Rate (cusecs)",
                 min_value=0.0,
-                value=float(round(latest_row["withdrawal_cusecs"], 0)),
+                value=float(round(_as_finite_nonnegative(init_with, 1000.0), 0)),
             )
 
-        res = simulate_conservation_scenario(
-            current_storage_tmc=curr_storage,
-            assumed_inflow_cusecs=sim_inflow,
-            planned_outflow_cusecs=sim_outflow,
-            baseline_withdrawal_cusecs=sim_withdrawal,
-            reduction_percentage=float(ration_pct),
-            simulation_days=sim_days,
-        )
+        try:
+            res = simulate_conservation_scenario(
+                current_storage_tmc=curr_storage,
+                assumed_inflow_cusecs=sim_inflow,
+                planned_outflow_cusecs=sim_outflow,
+                baseline_withdrawal_cusecs=sim_withdrawal,
+                reduction_percentage=float(ration_pct),
+                simulation_days=sim_days,
+                evaporation_cusecs=0.0,
+                storage_basis="gross_capacity_tmc",
+            )
 
-        st.markdown("---")
-        st.subheader("Scenario Results [HYPOTHETICAL]")
-        r1, r2, r3, r4 = st.columns(4)
-        r1.metric("Water Conserved (Volume)", f"{res.water_saved_tmc:.4f} TMC")
-        r2.metric("Savings vs Reservoir Capacity", f"{res.savings_as_pct_capacity:.2f}%")
-        r3.metric("Projected Baseline Storage", f"{res.projected_baseline_storage_tmc:.2f} TMC")
-        r4.metric("Projected Scenario Storage", f"{res.projected_scenario_storage_tmc:.2f} TMC")
+            st.markdown("---")
+            st.subheader("Scenario Results [HYPOTHETICAL]")
+            r1, r2, r3, r4 = st.columns(4)
+            r1.metric("Water Conserved (Volume)", f"{res.water_saved_tmc:.4f} TMC")
+            r2.metric("Savings vs Reservoir Capacity", f"{res.savings_as_pct_capacity:.2f}%")
+            r3.metric("Projected Baseline Storage", f"{res.projected_baseline_storage_tmc:.2f} TMC")
+            r4.metric("Projected Scenario Storage", f"{res.projected_scenario_storage_tmc:.2f} TMC")
 
-        st.caption(f"🛡️ **Disclaimer:** {res.disclaimer}")
+            st.caption(
+                "ℹ️ **Evaporation Note:** Evaporation is excluded from this scenario because its measurement "
+                "convention is unverified; this does NOT mean actual evaporation is zero."
+            )
+            st.caption(f"🛡️ **Disclaimer:** {res.disclaimer}")
+        except ValueError as exc:
+            st.error(f"Scenario simulation error: {exc}")
 
     # -------------------------------------------------------------
     # TAB 6: Data Quality & MLOps Status
@@ -575,6 +595,7 @@ def main() -> None:
             "HIGH": "red",
             "MEDIUM": "orange",
             "LOW": "green",
+            "HISTORICAL_ONLY": "blue",
             "INSUFFICIENT_DATA": "gray",
         }.get(risk_assessment.risk_level, "gray")
 

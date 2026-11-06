@@ -14,7 +14,9 @@ All scenarios are explicitly designated as hypothetical decision-support simulat
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+
+import numpy as np
 
 from src.utils.unit_conversions import (
     CUSEC_DAY_TO_TMC_FACTOR,
@@ -163,6 +165,9 @@ class ConservationScenarioResult:
         }
 
 
+SUPPORTED_STORAGE_BASES = {"live_above_cill_tmc", "gross_capacity_tmc"}
+
+
 def simulate_conservation_scenario(
     current_storage_tmc: float,
     assumed_inflow_cusecs: float,
@@ -183,18 +188,49 @@ def simulate_conservation_scenario(
     Aligns capacity reference to storage basis (live vs gross).
     Storage is bounded between 0 and design capacity, with raw unclipped values retained.
     """
-    if simulation_days <= 0:
-        raise ValueError("Simulation days must be positive")
-    if not (0.0 <= reduction_percentage <= 100.0):
-        raise ValueError("Reduction percentage must be between 0 and 100%")
+    if (
+        isinstance(simulation_days, bool)
+        or not isinstance(simulation_days, (int, np.integer))
+        or simulation_days <= 0
+    ):
+        raise ValueError("Simulation days must be positive (integer).")
+
+    numeric_checks = {
+        "current_storage_tmc": current_storage_tmc,
+        "assumed_inflow_cusecs": assumed_inflow_cusecs,
+        "planned_outflow_cusecs": planned_outflow_cusecs,
+        "baseline_withdrawal_cusecs": baseline_withdrawal_cusecs,
+        "reduction_percentage": reduction_percentage,
+        "evaporation_cusecs": evaporation_cusecs,
+    }
+    for name, val in numeric_checks.items():
+        if isinstance(val, bool):
+            raise ValueError(f"{name} must be numeric, not boolean.")
+        try:
+            num = float(val)
+            if not np.isfinite(num):
+                raise ValueError(f"{name} must be a finite number.")
+        except (TypeError, ValueError):
+            raise ValueError(f"{name} must be a finite number.")
+
     if current_storage_tmc < 0:
-        raise ValueError("Current storage cannot be negative")
+        raise ValueError("Current storage cannot be negative.")
     if assumed_inflow_cusecs < 0:
-        raise ValueError("Assumed inflow cannot be negative")
+        raise ValueError("Assumed inflow cannot be negative.")
     if planned_outflow_cusecs < 0:
-        raise ValueError("Planned outflow cannot be negative")
+        raise ValueError("Planned outflow cannot be negative.")
     if baseline_withdrawal_cusecs < 0:
-        raise ValueError("Baseline withdrawal cannot be negative")
+        raise ValueError("Baseline withdrawal cannot be negative.")
+    if evaporation_cusecs < 0:
+        raise ValueError("Evaporation cannot be negative.")
+    if not (0.0 <= reduction_percentage <= 100.0):
+        raise ValueError("Reduction percentage must be between 0 and 100%.")
+
+    if storage_basis not in SUPPORTED_STORAGE_BASES:
+        raise ValueError(
+            f"Unsupported storage basis '{storage_basis}'. "
+            f"Supported bases: {sorted(SUPPORTED_STORAGE_BASES)}"
+        )
 
     # Resolve capacity reference according to storage basis
     if design_capacity_tmc is None:
@@ -204,10 +240,21 @@ def simulate_conservation_scenario(
             else KRS_DESIGN_GROSS_CAPACITY_TMC
         )
     else:
-        capacity_limit = design_capacity_tmc
+        if isinstance(design_capacity_tmc, bool):
+            raise ValueError("Design capacity limit must be a number.")
+        try:
+            cap_val = float(design_capacity_tmc)
+            if not np.isfinite(cap_val) or cap_val <= 0:
+                raise ValueError("Design capacity limit must be positive and finite.")
+            capacity_limit = cap_val
+        except (TypeError, ValueError):
+            raise ValueError("Design capacity limit must be positive and finite.")
 
-    if capacity_limit <= 0:
-        raise ValueError("Design capacity limit must be positive")
+    if current_storage_tmc > capacity_limit:
+        raise ValueError(
+            f"Initial storage ({current_storage_tmc:.3f} TMC) exceeds capacity "
+            f"limit ({capacity_limit:.3f} TMC) for storage basis '{storage_basis}'."
+        )
 
     # Conservation withdrawal rate
     conservation_withdrawal = baseline_withdrawal_cusecs * (1.0 - (reduction_percentage / 100.0))
@@ -240,6 +287,14 @@ def simulate_conservation_scenario(
     projected_baseline = float(min(max(0.0, raw_proj_baseline), capacity_limit))
     projected_scenario = float(min(max(0.0, raw_proj_scenario), capacity_limit))
 
+    if evaporation_cusecs == 0.0:
+        evap_label = (
+            "Evaporation is excluded because its measurement convention is unverified "
+            "(this does NOT mean measured evaporation is zero)."
+        )
+    else:
+        evap_label = f"{evaporation_cusecs:.1f} cusecs daily assumption (provisional estimate)"
+
     assumptions = {
         "simulation_horizon_days": simulation_days,
         "storage_basis": storage_basis,
@@ -247,13 +302,14 @@ def simulate_conservation_scenario(
         "capacity_basis_alignment": f"Storage basis '{storage_basis}' evaluated against capacity limit of {capacity_limit} TMC",
         "constant_inflow_assumption": f"Flow of {assumed_inflow_cusecs:.1f} cusecs held constant across {simulation_days} days ({inflow_source})",
         "constant_outflow_assumption": f"River outflow of {planned_outflow_cusecs:.1f} cusecs held constant ({outflow_source})",
-        "evaporation_handling": f"{evaporation_cusecs:.1f} cusecs daily assumption (provisional estimate)",
+        "evaporation_handling": evap_label,
     }
 
     disclaimer = (
         "Hypothetical educational simulation based on simplified daily mass balance. "
         "Does not account for downstream irrigation water rights, river treaty requirements, "
-        "or localized rainfall. Not an operational dam-control instruction."
+        "or localized rainfall. Not an operational dam-control instruction. "
+        "Water-balance discrepancy is not proof of physical dam leakage."
     )
 
     return ConservationScenarioResult(
