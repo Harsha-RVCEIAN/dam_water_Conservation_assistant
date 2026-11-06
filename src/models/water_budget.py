@@ -129,6 +129,15 @@ class ConservationScenarioResult:
     projected_baseline_storage_tmc: float
     projected_scenario_storage_tmc: float
     disclaimer: str
+    raw_projected_baseline_tmc: float = 0.0
+    raw_projected_scenario_tmc: float = 0.0
+    baseline_exceeds_bounds: bool = False
+    scenario_exceeds_bounds: bool = False
+    assumptions: Dict[str, Any] = None
+
+    def __post_init__(self):
+        if self.assumptions is None:
+            self.assumptions = {}
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -144,6 +153,11 @@ class ConservationScenarioResult:
             "savings_as_pct_capacity": self.savings_as_pct_capacity,
             "projected_baseline_storage_tmc": self.projected_baseline_storage_tmc,
             "projected_scenario_storage_tmc": self.projected_scenario_storage_tmc,
+            "raw_projected_baseline_tmc": self.raw_projected_baseline_tmc,
+            "raw_projected_scenario_tmc": self.raw_projected_scenario_tmc,
+            "baseline_exceeds_bounds": self.baseline_exceeds_bounds,
+            "scenario_exceeds_bounds": self.scenario_exceeds_bounds,
+            "assumptions": self.assumptions,
             "disclaimer": self.disclaimer,
         }
 
@@ -158,11 +172,13 @@ def simulate_conservation_scenario(
     evaporation_cusecs: float = 150.0,
     design_capacity_tmc: float = KRS_DESIGN_GROSS_CAPACITY_TMC,
     scenario_name: str = "Irrigation Canal Rationing Scenario",
+    inflow_source: str = "Observed / Assumed constant flow",
+    outflow_source: str = "Planned constant release",
 ) -> ConservationScenarioResult:
     """Simulate a hypothetical water-conservation scenario over a specified horizon.
 
     Compares baseline vs reduced canal withdrawal while keeping other terms constant.
-    Storage is bounded between 0 and design capacity.
+    Storage is bounded between 0 and design capacity, with raw unclipped values retained.
     """
     if simulation_days <= 0:
         raise ValueError("Simulation days must be positive")
@@ -191,12 +207,24 @@ def simulate_conservation_scenario(
     total_saved_tmc = daily_saved_tmc * simulation_days
     savings_pct_cap = (total_saved_tmc / design_capacity_tmc) * 100.0
 
-    # Projected storages (clamped to physical bounds)
+    # Projected storages (raw mathematical projection)
     raw_proj_baseline = current_storage_tmc + (baseline_net_daily * simulation_days)
     raw_proj_scenario = current_storage_tmc + (scenario_net_daily * simulation_days)
 
+    baseline_exceeds = (raw_proj_baseline < 0.0) or (raw_proj_baseline > design_capacity_tmc)
+    scenario_exceeds = (raw_proj_scenario < 0.0) or (raw_proj_scenario > design_capacity_tmc)
+
+    # Clamped for display safety while retaining raw
     projected_baseline = float(min(max(0.0, raw_proj_baseline), design_capacity_tmc))
     projected_scenario = float(min(max(0.0, raw_proj_scenario), design_capacity_tmc))
+
+    assumptions = {
+        "simulation_horizon_days": simulation_days,
+        "constant_inflow_assumption": f"Flow of {assumed_inflow_cusecs:.1f} cusecs held constant across {simulation_days} days ({inflow_source})",
+        "constant_outflow_assumption": f"River outflow of {planned_outflow_cusecs:.1f} cusecs held constant ({outflow_source})",
+        "evaporation_handling": f"{evaporation_cusecs:.1f} cusecs daily assumption (provisional estimate)",
+        "capacity_denominator_tmc": design_capacity_tmc,
+    }
 
     disclaimer = (
         "Hypothetical educational simulation based on simplified daily mass balance. "
@@ -218,5 +246,43 @@ def simulate_conservation_scenario(
         savings_as_pct_capacity=round(savings_pct_cap, 3),
         projected_baseline_storage_tmc=round(projected_baseline, 4),
         projected_scenario_storage_tmc=round(projected_scenario, 4),
+        raw_projected_baseline_tmc=round(raw_proj_baseline, 4),
+        raw_projected_scenario_tmc=round(raw_proj_scenario, 4),
+        baseline_exceeds_bounds=baseline_exceeds,
+        scenario_exceeds_bounds=scenario_exceeds,
+        assumptions=assumptions,
         disclaimer=disclaimer,
     )
+
+
+def compare_conservation_scenarios(
+    current_storage_tmc: float,
+    assumed_inflow_cusecs: float,
+    planned_outflow_cusecs: float,
+    baseline_withdrawal_cusecs: float,
+    reductions: Optional[List[float]] = None,
+    simulation_days: int = 7,
+    evaporation_cusecs: float = 0.0,
+    design_capacity_tmc: float = KRS_DESIGN_GROSS_CAPACITY_TMC,
+    inflow_source: str = "Observed historical baseline",
+) -> List[ConservationScenarioResult]:
+    """Compare multiple standardized withdrawal rationing scenarios (5%, 10%, 15%, 20%)."""
+    if reductions is None:
+        reductions = [5.0, 10.0, 15.0, 20.0]
+
+    results: List[ConservationScenarioResult] = []
+    for r in sorted(reductions):
+        res = simulate_conservation_scenario(
+            current_storage_tmc=current_storage_tmc,
+            assumed_inflow_cusecs=assumed_inflow_cusecs,
+            planned_outflow_cusecs=planned_outflow_cusecs,
+            baseline_withdrawal_cusecs=baseline_withdrawal_cusecs,
+            reduction_percentage=r,
+            simulation_days=simulation_days,
+            evaporation_cusecs=evaporation_cusecs,
+            design_capacity_tmc=design_capacity_tmc,
+            scenario_name=f"{int(r)}% Canal Withdrawal Rationing",
+            inflow_source=inflow_source,
+        )
+        results.append(res)
+    return results

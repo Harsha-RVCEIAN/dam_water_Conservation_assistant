@@ -21,11 +21,18 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from src.models.predict import InflowForecaster
+from src.models.conservation_assessment import (
+    assess_reservoir_condition,
+    detect_abnormal_flow_patterns,
+    assess_water_shortage_risk,
+)
+from src.models.conservation_recommender import generate_conservation_recommendations
 from src.models.storage_analysis import extract_storage_summary, load_reservoir_config
 from src.models.water_balance import load_water_balance_config
 from src.models.water_budget import (
     KRS_DEAD_STORAGE_TMC,
     KRS_DESIGN_GROSS_CAPACITY_TMC,
+    compare_conservation_scenarios,
     cusec_day_to_tmc,
     simulate_conservation_scenario,
 )
@@ -112,6 +119,7 @@ def main() -> None:
         "🚩 Unusual Pattern Flags & Balance",
         "💧 Conservation Scenario Simulator",
         "📋 Data Quality & MLOps Status",
+        "🛡️ Water Conservation Assistant",
     ])
 
     # -------------------------------------------------------------
@@ -497,6 +505,144 @@ def main() -> None:
         st.write("- **DVC Remote:** None configured (local cache only; no remote credentials provided).")
         st.write("- **MLflow:** Tracking URI `file:./mlruns`, Experiment `dam_inflow_forecasting`.")
         st.write("- **Rainfall Pipeline:** `BLOCKED (EXTERNAL SOURCE ABSENT)` &middot; No external rainfall dataset or telemetry feed present in repository.")
+
+    # -------------------------------------------------------------
+    # TAB 7: Water Conservation Assistant (Layer B)
+    # -------------------------------------------------------------
+    with tabs[6]:
+        st.subheader("🛡️ Water Conservation Decision-Support Assistant")
+        st.caption("Academic prototype decision-support rules. Not a live dam-control or official allocation system.")
+
+        # 1. Freshness & Observation Banner
+        cond_assessment = assess_reservoir_condition(df)
+        st.info(
+            f"📅 **Observation Anchor:** `{cond_assessment.observation_date}` "
+            f"({cond_assessment.data_age_days} days elapsed &middot; **Status: {cond_assessment.data_freshness}**). "
+            "All recommendations reflect historical records; this system does NOT ingest live telemetry."
+        )
+
+        # 2. Reservoir Condition Assessment
+        st.markdown("#### 1. Reservoir Condition Assessment")
+        c_col1, c_col2, c_col3, c_col4 = st.columns(4)
+        c_col1.metric("Provisional Condition", cond_assessment.condition)
+        c_col2.metric("Live Storage (TMC)", f"{cond_assessment.storage_value_tmc:.2f}" if cond_assessment.storage_value_tmc else "N/A")
+        c_col3.metric("Storage Trajectory", cond_assessment.storage_trend)
+        c_col4.metric("Inflow Trajectory", cond_assessment.inflow_trend)
+
+        with st.expander("Condition Evidence & Limitations", expanded=False):
+            st.json(cond_assessment.evidence)
+            for lim in cond_assessment.limitations:
+                st.caption(f"&bull; {lim}")
+
+        st.markdown("---")
+
+        # 3. Shortage Risk Alerts
+        st.markdown("#### 2. Shortage Risk Alerts")
+        forecast_inflow = None
+        target_dt = None
+        if forecaster and forecast_result and not forecast_result.is_stale:
+            forecast_inflow = forecast_result.predicted_inflow_cfs
+            target_dt = forecast_result.target_date
+
+        risk_assessment = assess_water_shortage_risk(
+            cond_assessment,
+            inflow_forecast_cfs=forecast_inflow,
+            forecast_target_date=target_dt,
+        )
+
+        risk_color = {
+            "HIGH": "red",
+            "MEDIUM": "orange",
+            "LOW": "green",
+            "INSUFFICIENT_DATA": "gray",
+        }.get(risk_assessment.risk_level, "gray")
+
+        st.markdown(f"**Assessed Potential Risk Level:** :{risk_color}[**{risk_assessment.risk_level}**]")
+        if risk_assessment.risk_reasons:
+            for r in risk_assessment.risk_reasons:
+                st.write(f"- {r}")
+        st.caption(f"**Recommended Review Action:** {risk_assessment.suggested_review_action}")
+
+        st.markdown("---")
+
+        # 4. Abnormal Conditions & Water Balance Review
+        st.markdown("#### 3. Flow Anomalies & Water-Balance Diagnostics")
+        flow_anomalies = detect_abnormal_flow_patterns(df)
+        if flow_anomalies:
+            st.warning(f"Found {len(flow_anomalies)} statistical flow flag(s) in recent window for review.")
+            anom_data = [
+                {
+                    "Metric": a.metric,
+                    "Date": a.date,
+                    "Observed (cusecs)": a.observed_value,
+                    "Rolling Median (cusecs)": a.baseline_median,
+                    "Type": a.flag_type,
+                    "Details": a.reason,
+                }
+                for a in flow_anomalies
+            ]
+            st.dataframe(pd.DataFrame(anom_data), use_container_width=True)
+        else:
+            st.success("No statistical flow anomalies detected in the trailing 7-day observation window.")
+
+        st.info("ℹ️ **Notice:** Statistical deviations and water-balance discrepancies indicate simplified accounting residuals or unmodeled tributary flow; they DO NOT confirm physical leakage.")
+
+        st.markdown("---")
+
+        # 5. Explainable Advisory Recommendations
+        st.markdown("#### 4. Explainable Conservation Recommendations")
+        recs = generate_conservation_recommendations(
+            condition=cond_assessment,
+            risk=risk_assessment,
+            anomalies=flow_anomalies,
+        )
+
+        for rec in recs:
+            prio_badge = {"HIGH": "🔴 HIGH", "MEDIUM": "🟠 MEDIUM", "LOW": "🟢 LOW"}.get(rec.priority, rec.priority)
+            with st.container():
+                st.markdown(f"**{prio_badge} &middot; {rec.title}**")
+                st.write(f"**Trigger:** {rec.trigger}")
+                st.write(f"**Explanation:** {rec.explanation}")
+                st.write(f"**Suggested Action:** {rec.suggested_action}")
+                with st.expander("Evidence & Limitations"):
+                    st.json(rec.evidence)
+                    for l in rec.limitations:
+                        st.caption(f"- {l}")
+                st.markdown("")
+
+        st.markdown("---")
+
+        # 6. Conservation Scenario Comparisons (5%, 10%, 15%, 20%)
+        st.markdown("#### 5. Hypothetical Withdrawal Rationing Scenarios")
+        st.write("Evaluate potential water savings across standardized canal withdrawal reductions (5%, 10%, 15%, 20%).")
+
+        sc_inflow = float(latest_row.get("inflow_cusecs", 2000.0))
+        sc_outflow = float(latest_row.get("outflow_cusecs", 1000.0))
+        sc_with = float(latest_row.get("withdrawal_cusecs", 2500.0))
+        sc_storage = float(cond_assessment.storage_value_tmc or 25.0)
+
+        sim_scenarios = compare_conservation_scenarios(
+            current_storage_tmc=sc_storage,
+            assumed_inflow_cusecs=sc_inflow,
+            planned_outflow_cusecs=sc_outflow,
+            baseline_withdrawal_cusecs=sc_with,
+            reductions=[5.0, 10.0, 15.0, 20.0],
+            simulation_days=7,
+            evaporation_cusecs=0.0,
+        )
+
+        sc_table = []
+        for s in sim_scenarios:
+            sc_table.append({
+                "Scenario": s.scenario_name,
+                "Canal Withdrawal (cusecs)": round(s.conservation_withdrawal_cusecs, 1),
+                "Daily Saved (TMC/day)": round(cusec_day_to_tmc(s.baseline_withdrawal_cusecs - s.conservation_withdrawal_cusecs), 5),
+                "7-Day Conserved (TMC)": s.water_saved_tmc,
+                "Raw Projected Storage (TMC)": s.raw_projected_scenario_tmc,
+                "Bounds Flag": "OUT_OF_BOUNDS" if s.scenario_exceeds_bounds else "NORMAL",
+            })
+        st.dataframe(pd.DataFrame(sc_table), use_container_width=True)
+        st.caption("Assumptions: 7-day constant flow; unverified evaporation excluded (0.0 TMC); hypothetical non-operational simulation.")
 
 
 if __name__ == "__main__":
