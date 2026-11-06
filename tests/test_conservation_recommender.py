@@ -12,6 +12,7 @@ def test_recommender_triggers_withdrawal_evaluation_and_storage_decline():
     cond = ReservoirConditionAssessment(
         condition="WATCH",
         observation_date="2024-06-07",
+        storage_measurement_date="2024-06-07",
         data_age_days=100,
         data_freshness="HISTORICAL_ARCHIVE",
         storage_value_tmc=18.5,
@@ -67,6 +68,7 @@ def test_recommender_suppresses_operational_advice_on_insufficient_data():
     cond = ReservoirConditionAssessment(
         condition="INSUFFICIENT_DATA",
         observation_date=None,
+        storage_measurement_date=None,
         data_age_days=None,
         data_freshness="UNKNOWN",
         storage_value_tmc=None,

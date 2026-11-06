@@ -13,7 +13,7 @@ assessment:
 
 anomaly_detection:
   method: "rolling_median_mad"
-  window_days: 14
+  window_observations: 14
   mad_multiplier: 3.0
   min_samples: 7
 
@@ -22,6 +22,6 @@ risk_assessment:
   withdrawal_to_inflow_ratio_high: 1.5
 
 scenarios:
+  storage_basis: "live_above_cill_tmc"
   standard_reductions_pct: [5.0, 10.0, 15.0, 20.0]
   default_horizon_days: 7
-

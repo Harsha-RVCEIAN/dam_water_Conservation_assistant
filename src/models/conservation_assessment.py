@@ -29,13 +29,14 @@ def _load_config() -> Dict[str, Any]:
             "min_valid_observations": 5,
             "storage_provisional_thresholds": {
                 "basis": "live_above_cill_tmc",
+                "high_tmc": 35.0,
                 "watch_tmc": 20.0,
                 "low_tmc": 10.0,
             },
             "inflow_provisional_low_cusecs": 1500.0,
         },
         "anomaly_detection": {
-            "window_days": 14,
+            "window_observations": 14,
             "mad_multiplier": 3.0,
             "min_samples": 7,
         },
@@ -48,8 +49,9 @@ def _load_config() -> Dict[str, Any]:
 
 @dataclass
 class ReservoirConditionAssessment:
-    condition: str  # NORMAL, WATCH, HIGH_RISK, INSUFFICIENT_DATA
+    condition: str  # SURPLUS, NORMAL, WATCH, HIGH_RISK, INSUFFICIENT_DATA
     observation_date: Optional[str]
+    storage_measurement_date: Optional[str]
     data_age_days: Optional[int]
     data_freshness: str  # FRESH, STALE, HISTORICAL_ARCHIVE, UNKNOWN
     storage_value_tmc: Optional[float]
@@ -110,16 +112,18 @@ def assess_reservoir_condition(
 ) -> ReservoirConditionAssessment:
     """Evaluate current condition of reservoir using historical observations.
 
-    Enforces interval verification and date alignment.
+    Enforces interval verification, date alignment, and minimum valid observation counts.
     """
     if config is None:
         config = _load_config()
     cfg_assess = config.get("assessment", {})
     trend_window = cfg_assess.get("trend_window_observations", 7)
     min_obs = cfg_assess.get("min_valid_observations", 5)
-    storage_basis = cfg_assess.get("storage_provisional_thresholds", {}).get("basis", "live_above_cill_tmc")
-    watch_tmc = cfg_assess.get("storage_provisional_thresholds", {}).get("watch_tmc", 20.0)
-    low_tmc = cfg_assess.get("storage_provisional_thresholds", {}).get("low_tmc", 10.0)
+    storage_cfg = cfg_assess.get("storage_provisional_thresholds", {})
+    storage_basis = storage_cfg.get("basis", "live_above_cill_tmc")
+    high_tmc = storage_cfg.get("high_tmc", 35.0)
+    watch_tmc = storage_cfg.get("watch_tmc", 20.0)
+    low_tmc = storage_cfg.get("low_tmc", 10.0)
 
     limitations = [
         "Academic prototype: thresholds are provisional and not official KRS operating bands.",
@@ -130,6 +134,7 @@ def assess_reservoir_condition(
         return ReservoirConditionAssessment(
             condition="INSUFFICIENT_DATA",
             observation_date=None,
+            storage_measurement_date=None,
             data_age_days=None,
             data_freshness="UNKNOWN",
             storage_value_tmc=None,
@@ -153,6 +158,7 @@ def assess_reservoir_condition(
             return ReservoirConditionAssessment(
                 condition="INSUFFICIENT_DATA",
                 observation_date=as_of_date,
+                storage_measurement_date=None,
                 data_age_days=None,
                 data_freshness="UNKNOWN",
                 storage_value_tmc=None,
@@ -179,14 +185,20 @@ def assess_reservoir_condition(
     else:
         freshness = "FRESH"
 
-    # Get recent window
+    # Get recent window slice
     recent_slice = df_sorted.iloc[-trend_window:]
-    valid_storage_series = recent_slice[storage_basis] if storage_basis in recent_slice.columns else pd.Series(dtype=float)
+    valid_storage_series = (
+        recent_slice[storage_basis]
+        if storage_basis in recent_slice.columns
+        else pd.Series(dtype=float, index=recent_slice.index)
+    )
 
-    if len(recent_slice) < min_obs or valid_storage_series.dropna().empty:
+    valid_count = int(valid_storage_series.notna().sum())
+    if len(recent_slice) < min_obs or valid_count < min_obs:
         return ReservoirConditionAssessment(
             condition="INSUFFICIENT_DATA",
             observation_date=obs_date,
+            storage_measurement_date=None,
             data_age_days=data_age_days,
             data_freshness=freshness,
             storage_value_tmc=None,
@@ -195,11 +207,35 @@ def assess_reservoir_condition(
             inflow_trend="UNKNOWN",
             river_outflow_trend="UNKNOWN",
             canal_withdrawal_trend="UNKNOWN",
-            evidence={"observation_count": len(recent_slice)},
-            limitations=limitations + ["Fewer than minimum required valid observations in recent window."],
+            evidence={
+                "observation_count": len(recent_slice),
+                "valid_storage_count": valid_count,
+                "required_min_observations": min_obs,
+            },
+            limitations=limitations + [
+                f"Recent window has only {valid_count} valid storage readings; minimum {min_obs} required."
+            ],
         )
 
-    latest_storage = float(valid_storage_series.dropna().iloc[-1]) if not valid_storage_series.dropna().empty else None
+    # Determine storage measurement date and value
+    valid_storage_rows = recent_slice[recent_slice[storage_basis].notna()]
+    latest_storage_row = valid_storage_rows.iloc[-1]
+    latest_storage = float(latest_storage_row[storage_basis])
+    storage_meas_date = latest_storage_row["calendar_date"].strftime("%Y-%m-%d")
+
+    if storage_meas_date != obs_date:
+        limitations.append(
+            f"Latest storage value is from {storage_meas_date}, while latest dataset record is {obs_date}."
+        )
+
+    # Count consecutive storage decline days
+    storage_diffs = valid_storage_rows[storage_basis].diff().dropna().tolist()
+    consecutive_declines = 0
+    for diff in reversed(storage_diffs):
+        if diff < 0:
+            consecutive_declines += 1
+        else:
+            break
 
     # Trends
     s_trend = _calculate_trend(valid_storage_series)
@@ -211,19 +247,24 @@ def assess_reservoir_condition(
     outflow_trend = _calculate_trend(recent_slice[outflow_col]) if outflow_col in recent_slice.columns else "UNKNOWN"
     withdrawal_trend = _calculate_trend(recent_slice[withdrawal_col]) if withdrawal_col in recent_slice.columns else "UNKNOWN"
 
-    # Condition determination
+    # Condition determination using high_tmc, watch_tmc, and low_tmc
     if latest_storage is None:
         condition = "INSUFFICIENT_DATA"
     elif latest_storage <= low_tmc:
         condition = "HIGH_RISK"
     elif latest_storage <= watch_tmc:
         condition = "WATCH"
+    elif latest_storage >= high_tmc:
+        condition = "SURPLUS"
     else:
         condition = "NORMAL"
 
     evidence = {
         "latest_storage_tmc": latest_storage,
+        "storage_measurement_date": storage_meas_date,
         "recent_window_days": len(recent_slice),
+        "valid_storage_count": valid_count,
+        "consecutive_storage_decline_days": consecutive_declines,
         "mean_inflow_cusecs": float(recent_slice[inflow_col].mean()) if inflow_col in recent_slice.columns else None,
         "mean_withdrawal_cusecs": float(recent_slice[withdrawal_col].mean()) if withdrawal_col in recent_slice.columns else None,
     }
@@ -231,6 +272,7 @@ def assess_reservoir_condition(
     return ReservoirConditionAssessment(
         condition=condition,
         observation_date=obs_date,
+        storage_measurement_date=storage_meas_date,
         data_age_days=data_age_days,
         data_freshness=freshness,
         storage_value_tmc=latest_storage,
@@ -251,12 +293,13 @@ def detect_abnormal_flow_patterns(
 ) -> List[FlowAnomalyFlag]:
     """Detect unusual flow patterns using robust rolling Median Absolute Deviation (MAD).
 
-    Excludes missing values without zero-filling.
+    Prevents self-contamination by using shifted historical baseline (shift(1)) and
+    enforces minimum sample size against valid historical observations.
     """
     if config is None:
         config = _load_config()
     cfg_anom = config.get("anomaly_detection", {})
-    window = cfg_anom.get("window_days", 14)
+    window_obs = cfg_anom.get("window_observations", cfg_anom.get("window_days", 14))
     mad_multiplier = cfg_anom.get("mad_multiplier", 3.0)
     min_samples = cfg_anom.get("min_samples", 7)
 
@@ -271,12 +314,13 @@ def detect_abnormal_flow_patterns(
 
     for col in columns:
         series = df_work[col]
-        # Robust rolling statistics
-        rolling_median = series.rolling(window=window, min_periods=min_samples).median()
-        rolling_dev = (series - rolling_median).abs()
-        rolling_mad = rolling_dev.rolling(window=window, min_periods=min_samples).median()
+        # Shift series by 1 so the current observation does not contribute to its own baseline
+        hist_series = series.shift(1)
+        rolling_median = hist_series.rolling(window=window_obs, min_periods=min_samples).median()
+        rolling_dev = (hist_series - rolling_median).abs()
+        rolling_mad = rolling_dev.rolling(window=window_obs, min_periods=min_samples).median()
 
-        # Check latest rows (last 7 days)
+        # Check recent window observations (last 7 rows)
         tail_idx = df_work.index[-7:]
         for idx in tail_idx:
             val = series.iloc[idx]
@@ -292,6 +336,12 @@ def detect_abnormal_flow_patterns(
                         reason=f"Missing observation in {col}.",
                     )
                 )
+                continue
+
+            # Ensure minimum sample count in the preceding historical window
+            start_window_idx = max(0, idx - window_obs)
+            valid_hist_count = hist_series.iloc[start_window_idx:idx].notna().sum()
+            if valid_hist_count < min_samples:
                 continue
 
             med = rolling_median.iloc[idx]
@@ -314,7 +364,7 @@ def detect_abnormal_flow_patterns(
                         baseline_median=float(med),
                         threshold_mad=float(threshold),
                         flag_type="UNUSUAL_FLOW",
-                        reason=f"{col} value ({val:.1f}) deviates by {deviation:.1f} from rolling median ({med:.1f}).",
+                        reason=f"{col} value ({val:.1f}) deviates by {deviation:.1f} from historical baseline median ({med:.1f}).",
                     )
                 )
     return flags
@@ -328,12 +378,13 @@ def assess_water_shortage_risk(
 ) -> ShortageRiskAssessment:
     """Assess potential water-shortage risk from evidence without unsupported extrapolation.
 
-    A 1-day forecast is never interpreted as a multi-week drought prediction.
+    Integrates consecutive_storage_decline_days from configuration.
     """
     if config is None:
         config = _load_config()
     cfg_risk = config.get("risk_assessment", {})
     ratio_high_thresh = cfg_risk.get("withdrawal_to_inflow_ratio_high", 1.5)
+    decline_days_thresh = cfg_risk.get("consecutive_storage_decline_days", 3)
 
     limitations = [
         "Advisory screening: does not constitute an official drought or shortage declaration.",
@@ -361,10 +412,16 @@ def assess_water_shortage_risk(
         score += 1
         risk_reasons.append(f"Storage ({condition.storage_value_tmc:.2f} TMC) is in provisional watch band.")
 
-    # Evidence 2: Storage Trend
-    if condition.storage_trend == "DECLINING":
+    # Evidence 2: Storage Trend & Consecutive Decline Days
+    consec_declines = condition.evidence.get("consecutive_storage_decline_days", 0)
+    if consec_declines >= decline_days_thresh:
         score += 1
-        risk_reasons.append("Live storage is consistently declining across recent observations.")
+        risk_reasons.append(
+            f"Live storage has declined for {consec_declines} consecutive observations (>= {decline_days_thresh} days configured)."
+        )
+    elif condition.storage_trend == "DECLINING":
+        score += 1
+        risk_reasons.append("Live storage is exhibiting a declining trajectory across recent observations.")
 
     # Evidence 3: Withdrawal vs Inflow Balance
     mean_inflow = condition.evidence.get("mean_inflow_cusecs")
@@ -398,7 +455,9 @@ def assess_water_shortage_risk(
         action = "Maintain regular monitoring schedule."
 
     if condition.data_freshness in ["STALE", "HISTORICAL_ARCHIVE"]:
-        limitations.append(f"Assessment reflects historical state as of {condition.observation_date}, not current real-time condition.")
+        limitations.append(
+            f"Assessment reflects historical state as of {condition.observation_date}, not current real-time condition."
+        )
 
     return ShortageRiskAssessment(
         risk_level=risk_level,
@@ -406,8 +465,10 @@ def assess_water_shortage_risk(
         supporting_metrics={
             "score": score,
             "observation_date": condition.observation_date,
+            "storage_measurement_date": condition.storage_measurement_date,
             "storage_tmc": condition.storage_value_tmc,
             "forecast_inflow_cfs": inflow_forecast_cfs,
+            "consecutive_storage_decline_days": consec_declines,
         },
         suggested_review_action=action,
         data_quality_status=condition.data_freshness,

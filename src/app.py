@@ -28,10 +28,11 @@ from src.models.conservation_assessment import (
 )
 from src.models.conservation_recommender import generate_conservation_recommendations
 from src.models.storage_analysis import extract_storage_summary, load_reservoir_config
-from src.models.water_balance import load_water_balance_config
+from src.models.water_balance import compute_water_balance_interval, load_water_balance_config
 from src.models.water_budget import (
     KRS_DEAD_STORAGE_TMC,
     KRS_DESIGN_GROSS_CAPACITY_TMC,
+    KRS_DESIGN_LIVE_CAPACITY_TMC,
     compare_conservation_scenarios,
     cusec_day_to_tmc,
     simulate_conservation_scenario,
@@ -111,6 +112,14 @@ def main() -> None:
         st.success(
             f"✅ **Data Freshness:** Latest observation is current (**{latest_date_str}**)."
         )
+
+    # Initialize model forecast safely before tab rendering
+    forecast_res = None
+    if forecaster:
+        try:
+            forecast_res = forecaster.predict_latest_from_processed(PROCESSED_DATA_PATH)
+        except Exception:
+            forecast_res = None
 
     tabs = st.tabs([
         "📊 Reservoir Overview",
@@ -271,9 +280,10 @@ def main() -> None:
 
         if forecaster is None:
             st.warning("⚠️ Model forecaster or metadata artifact not found. Please run training pipeline.")
+        elif forecast_res is None:
+            st.warning("⚠️ Forecast could not be generated from latest features.")
         else:
             latest_features = df.iloc[[-1]]
-            forecast_res = forecaster.predict_latest_from_processed(PROCESSED_DATA_PATH)
 
             origin_date = forecast_res["forecast_origin_date"]
             target_date = forecast_res["forecast_target_date"]
@@ -520,12 +530,20 @@ def main() -> None:
             f"({cond_assessment.data_age_days} days elapsed &middot; **Status: {cond_assessment.data_freshness}**). "
             "All recommendations reflect historical records; this system does NOT ingest live telemetry."
         )
+        if (
+            cond_assessment.storage_measurement_date
+            and cond_assessment.storage_measurement_date != cond_assessment.observation_date
+        ):
+            st.warning(
+                f"⚠️ **Note on Measurement Date:** Observation record anchor is `{cond_assessment.observation_date}`, "
+                f"but the latest valid storage measurement was recorded on `{cond_assessment.storage_measurement_date}`."
+            )
 
         # 2. Reservoir Condition Assessment
         st.markdown("#### 1. Reservoir Condition Assessment")
         c_col1, c_col2, c_col3, c_col4 = st.columns(4)
         c_col1.metric("Provisional Condition", cond_assessment.condition)
-        c_col2.metric("Live Storage (TMC)", f"{cond_assessment.storage_value_tmc:.2f}" if cond_assessment.storage_value_tmc else "N/A")
+        c_col2.metric("Live Storage (TMC)", f"{cond_assessment.storage_value_tmc:.2f}" if cond_assessment.storage_value_tmc is not None else "N/A")
         c_col3.metric("Storage Trajectory", cond_assessment.storage_trend)
         c_col4.metric("Inflow Trajectory", cond_assessment.inflow_trend)
 
@@ -540,9 +558,9 @@ def main() -> None:
         st.markdown("#### 2. Shortage Risk Alerts")
         forecast_inflow = None
         target_dt = None
-        if forecaster and forecast_result and not forecast_result.is_stale:
-            forecast_inflow = forecast_result.predicted_inflow_cfs
-            target_dt = forecast_result.target_date
+        if forecaster and forecast_res and not forecast_res.get("is_stale", True):
+            forecast_inflow = forecast_res.get("forecast_inflow_cusecs")
+            target_dt = forecast_res.get("forecast_target_date")
 
         risk_assessment = assess_water_shortage_risk(
             cond_assessment,
@@ -575,7 +593,7 @@ def main() -> None:
                     "Metric": a.metric,
                     "Date": a.date,
                     "Observed (cusecs)": a.observed_value,
-                    "Rolling Median (cusecs)": a.baseline_median,
+                    "Historical Median (cusecs)": a.baseline_median,
                     "Type": a.flag_type,
                     "Details": a.reason,
                 }
@@ -583,9 +601,34 @@ def main() -> None:
             ]
             st.dataframe(pd.DataFrame(anom_data), use_container_width=True)
         else:
-            st.success("No statistical flow anomalies detected in the trailing 7-day observation window.")
+            st.success("No statistical flow anomalies detected in the trailing observation window.")
 
         st.info("ℹ️ **Notice:** Statistical deviations and water-balance discrepancies indicate simplified accounting residuals or unmodeled tributary flow; they DO NOT confirm physical leakage.")
+
+        # Water-balance interval diagnostic for recommendations
+        wb_status = None
+        wb_disc = None
+        if len(df) >= 2:
+            row_prev = df.iloc[-2]
+            row_curr = df.iloc[-1]
+            wb_calc = compute_water_balance_interval(
+                start_date=row_prev["calendar_date"],
+                end_date=row_curr["calendar_date"],
+                start_storage_tmc=row_prev.get("live_above_cill_tmc"),
+                end_storage_tmc=row_curr.get("live_above_cill_tmc"),
+                inflow_cusecs=row_curr.get("inflow_cusecs"),
+                river_outflow_cusecs=row_curr.get("outflow_cusecs"),
+                canal_withdrawal_cusecs=row_curr.get("withdrawal_cusecs"),
+                evaporation_cusecs=row_curr.get("evaporation_cusecs"),
+                storage_basis="live_above_cill_tmc",
+                expected_days=1,
+                evaporation_verified=False,
+            )
+            wb_status = wb_calc.status
+            if wb_calc.status == "COMPLETE" and wb_calc.balance_discrepancy_tmc is not None:
+                wb_disc = wb_calc.balance_discrepancy_tmc
+            else:
+                wb_disc = None
 
         st.markdown("---")
 
@@ -595,6 +638,8 @@ def main() -> None:
             condition=cond_assessment,
             risk=risk_assessment,
             anomalies=flow_anomalies,
+            water_balance_status=wb_status,
+            water_balance_discrepancy_tmc=wb_disc,
         )
 
         for rec in recs:
@@ -616,33 +661,40 @@ def main() -> None:
         st.markdown("#### 5. Hypothetical Withdrawal Rationing Scenarios")
         st.write("Evaluate potential water savings across standardized canal withdrawal reductions (5%, 10%, 15%, 20%).")
 
-        sc_inflow = float(latest_row.get("inflow_cusecs", 2000.0))
-        sc_outflow = float(latest_row.get("outflow_cusecs", 1000.0))
-        sc_with = float(latest_row.get("withdrawal_cusecs", 2500.0))
-        sc_storage = float(cond_assessment.storage_value_tmc or 25.0)
+        if cond_assessment.storage_value_tmc is None:
+            st.warning("⚠️ Live storage value is unavailable; hypothetical scenarios cannot be initiated without a valid initial storage volume.")
+        else:
+            sc_inflow = float(latest_row.get("inflow_cusecs", 2000.0))
+            sc_outflow = float(latest_row.get("outflow_cusecs", 1000.0))
+            sc_with = float(latest_row.get("withdrawal_cusecs", 2500.0))
+            sc_storage = float(cond_assessment.storage_value_tmc)
 
-        sim_scenarios = compare_conservation_scenarios(
-            current_storage_tmc=sc_storage,
-            assumed_inflow_cusecs=sc_inflow,
-            planned_outflow_cusecs=sc_outflow,
-            baseline_withdrawal_cusecs=sc_with,
-            reductions=[5.0, 10.0, 15.0, 20.0],
-            simulation_days=7,
-            evaporation_cusecs=0.0,
-        )
+            sim_scenarios = compare_conservation_scenarios(
+                current_storage_tmc=sc_storage,
+                assumed_inflow_cusecs=sc_inflow,
+                planned_outflow_cusecs=sc_outflow,
+                baseline_withdrawal_cusecs=sc_with,
+                reductions=[5.0, 10.0, 15.0, 20.0],
+                simulation_days=7,
+                evaporation_cusecs=0.0,
+                storage_basis=cond_assessment.storage_basis,
+            )
 
-        sc_table = []
-        for s in sim_scenarios:
-            sc_table.append({
-                "Scenario": s.scenario_name,
-                "Canal Withdrawal (cusecs)": round(s.conservation_withdrawal_cusecs, 1),
-                "Daily Saved (TMC/day)": round(cusec_day_to_tmc(s.baseline_withdrawal_cusecs - s.conservation_withdrawal_cusecs), 5),
-                "7-Day Conserved (TMC)": s.water_saved_tmc,
-                "Raw Projected Storage (TMC)": s.raw_projected_scenario_tmc,
-                "Bounds Flag": "OUT_OF_BOUNDS" if s.scenario_exceeds_bounds else "NORMAL",
-            })
-        st.dataframe(pd.DataFrame(sc_table), use_container_width=True)
-        st.caption("Assumptions: 7-day constant flow; unverified evaporation excluded (0.0 TMC); hypothetical non-operational simulation.")
+            sc_table = []
+            for s in sim_scenarios:
+                sc_table.append({
+                    "Scenario": s.scenario_name,
+                    "Canal Withdrawal (cusecs)": round(s.conservation_withdrawal_cusecs, 1),
+                    "Daily Saved (TMC/day)": round(cusec_day_to_tmc(s.baseline_withdrawal_cusecs - s.conservation_withdrawal_cusecs), 5),
+                    "7-Day Conserved (TMC)": s.water_saved_tmc,
+                    "Raw Projected Storage (TMC)": s.raw_projected_scenario_tmc,
+                    "Bounds Flag": "OUT_OF_BOUNDS" if s.scenario_exceeds_bounds else "NORMAL",
+                })
+            st.dataframe(pd.DataFrame(sc_table), use_container_width=True)
+            st.caption(
+                f"Assumptions: 7-day constant flow; storage basis '{cond_assessment.storage_basis}' bounded against "
+                f"reference capacity of {KRS_DESIGN_LIVE_CAPACITY_TMC} TMC; unverified evaporation excluded (0.0 TMC); hypothetical non-operational simulation."
+            )
 
 
 if __name__ == "__main__":

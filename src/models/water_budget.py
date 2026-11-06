@@ -26,7 +26,8 @@ from src.utils.unit_conversions import (
 CUSEC_DAY_TO_TMC = CUSEC_DAY_TO_TMC_FACTOR  # 1 cusec * 86400 seconds / 10^9 cu ft
 TMC_TO_CUSEC_DAY = 1.0 / CUSEC_DAY_TO_TMC
 KRS_DESIGN_GROSS_CAPACITY_TMC = 49.452
-KRS_DEAD_STORAGE_TMC = 4.379  # Approx dead storage below cill level
+KRS_DESIGN_LIVE_CAPACITY_TMC = 45.051
+KRS_DEAD_STORAGE_TMC = 4.401  # Reference dead storage below sill level (reservoir_reference.yaml)
 
 
 def cusec_day_to_tmc(cusecs: float) -> float:
@@ -170,7 +171,8 @@ def simulate_conservation_scenario(
     reduction_percentage: float,
     simulation_days: int = 7,
     evaporation_cusecs: float = 150.0,
-    design_capacity_tmc: float = KRS_DESIGN_GROSS_CAPACITY_TMC,
+    design_capacity_tmc: Optional[float] = None,
+    storage_basis: str = "live_above_cill_tmc",
     scenario_name: str = "Irrigation Canal Rationing Scenario",
     inflow_source: str = "Observed / Assumed constant flow",
     outflow_source: str = "Planned constant release",
@@ -178,6 +180,7 @@ def simulate_conservation_scenario(
     """Simulate a hypothetical water-conservation scenario over a specified horizon.
 
     Compares baseline vs reduced canal withdrawal while keeping other terms constant.
+    Aligns capacity reference to storage basis (live vs gross).
     Storage is bounded between 0 and design capacity, with raw unclipped values retained.
     """
     if simulation_days <= 0:
@@ -186,6 +189,25 @@ def simulate_conservation_scenario(
         raise ValueError("Reduction percentage must be between 0 and 100%")
     if current_storage_tmc < 0:
         raise ValueError("Current storage cannot be negative")
+    if assumed_inflow_cusecs < 0:
+        raise ValueError("Assumed inflow cannot be negative")
+    if planned_outflow_cusecs < 0:
+        raise ValueError("Planned outflow cannot be negative")
+    if baseline_withdrawal_cusecs < 0:
+        raise ValueError("Baseline withdrawal cannot be negative")
+
+    # Resolve capacity reference according to storage basis
+    if design_capacity_tmc is None:
+        capacity_limit = (
+            KRS_DESIGN_LIVE_CAPACITY_TMC
+            if storage_basis == "live_above_cill_tmc"
+            else KRS_DESIGN_GROSS_CAPACITY_TMC
+        )
+    else:
+        capacity_limit = design_capacity_tmc
+
+    if capacity_limit <= 0:
+        raise ValueError("Design capacity limit must be positive")
 
     # Conservation withdrawal rate
     conservation_withdrawal = baseline_withdrawal_cusecs * (1.0 - (reduction_percentage / 100.0))
@@ -205,25 +227,27 @@ def simulate_conservation_scenario(
     # Total savings over simulation period
     daily_saved_tmc = baseline_withdrawal_daily_tmc - conservation_withdrawal_daily_tmc
     total_saved_tmc = daily_saved_tmc * simulation_days
-    savings_pct_cap = (total_saved_tmc / design_capacity_tmc) * 100.0
+    savings_pct_cap = (total_saved_tmc / capacity_limit) * 100.0
 
     # Projected storages (raw mathematical projection)
     raw_proj_baseline = current_storage_tmc + (baseline_net_daily * simulation_days)
     raw_proj_scenario = current_storage_tmc + (scenario_net_daily * simulation_days)
 
-    baseline_exceeds = (raw_proj_baseline < 0.0) or (raw_proj_baseline > design_capacity_tmc)
-    scenario_exceeds = (raw_proj_scenario < 0.0) or (raw_proj_scenario > design_capacity_tmc)
+    baseline_exceeds = (raw_proj_baseline < 0.0) or (raw_proj_baseline > capacity_limit)
+    scenario_exceeds = (raw_proj_scenario < 0.0) or (raw_proj_scenario > capacity_limit)
 
     # Clamped for display safety while retaining raw
-    projected_baseline = float(min(max(0.0, raw_proj_baseline), design_capacity_tmc))
-    projected_scenario = float(min(max(0.0, raw_proj_scenario), design_capacity_tmc))
+    projected_baseline = float(min(max(0.0, raw_proj_baseline), capacity_limit))
+    projected_scenario = float(min(max(0.0, raw_proj_scenario), capacity_limit))
 
     assumptions = {
         "simulation_horizon_days": simulation_days,
+        "storage_basis": storage_basis,
+        "capacity_denominator_tmc": capacity_limit,
+        "capacity_basis_alignment": f"Storage basis '{storage_basis}' evaluated against capacity limit of {capacity_limit} TMC",
         "constant_inflow_assumption": f"Flow of {assumed_inflow_cusecs:.1f} cusecs held constant across {simulation_days} days ({inflow_source})",
         "constant_outflow_assumption": f"River outflow of {planned_outflow_cusecs:.1f} cusecs held constant ({outflow_source})",
         "evaporation_handling": f"{evaporation_cusecs:.1f} cusecs daily assumption (provisional estimate)",
-        "capacity_denominator_tmc": design_capacity_tmc,
     }
 
     disclaimer = (
@@ -263,7 +287,8 @@ def compare_conservation_scenarios(
     reductions: Optional[List[float]] = None,
     simulation_days: int = 7,
     evaporation_cusecs: float = 0.0,
-    design_capacity_tmc: float = KRS_DESIGN_GROSS_CAPACITY_TMC,
+    design_capacity_tmc: Optional[float] = None,
+    storage_basis: str = "live_above_cill_tmc",
     inflow_source: str = "Observed historical baseline",
 ) -> List[ConservationScenarioResult]:
     """Compare multiple standardized withdrawal rationing scenarios (5%, 10%, 15%, 20%)."""
@@ -281,6 +306,7 @@ def compare_conservation_scenarios(
             simulation_days=simulation_days,
             evaporation_cusecs=evaporation_cusecs,
             design_capacity_tmc=design_capacity_tmc,
+            storage_basis=storage_basis,
             scenario_name=f"{int(r)}% Canal Withdrawal Rationing",
             inflow_source=inflow_source,
         )

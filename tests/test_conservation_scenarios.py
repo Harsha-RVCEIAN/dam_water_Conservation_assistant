@@ -1,9 +1,10 @@
-"""Tests for Layer B scenario comparison and mathematical bounds checks."""
+"""Tests for Layer B scenario comparison, input validations, and mathematical bounds checks."""
 
 import pytest
 
 from src.models.water_budget import (
     KRS_DESIGN_GROSS_CAPACITY_TMC,
+    KRS_DESIGN_LIVE_CAPACITY_TMC,
     compare_conservation_scenarios,
     simulate_conservation_scenario,
 )
@@ -19,6 +20,7 @@ def test_compare_conservation_scenarios_standard_fractions():
         reductions=[5.0, 10.0, 15.0, 20.0],
         simulation_days=10,
         evaporation_cusecs=0.0,
+        storage_basis="live_above_cill_tmc",
     )
 
     assert len(results) == 4
@@ -32,7 +34,8 @@ def test_compare_conservation_scenarios_standard_fractions():
 
     for r in results:
         assert r.raw_projected_scenario_tmc >= r.raw_projected_baseline_tmc
-        assert "constant_inflow_assumption" in r.assumptions
+        assert r.assumptions["storage_basis"] == "live_above_cill_tmc"
+        assert r.assumptions["capacity_denominator_tmc"] == KRS_DESIGN_LIVE_CAPACITY_TMC
 
 
 def test_scenario_detects_bounds_exceeded_without_silent_corruption():
@@ -45,6 +48,7 @@ def test_scenario_detects_bounds_exceeded_without_silent_corruption():
         reduction_percentage=5.0,
         simulation_days=10,
         evaporation_cusecs=0.0,
+        storage_basis="live_above_cill_tmc",
     )
     # Raw mathematical projection is negative
     assert res.raw_projected_baseline_tmc < 0.0
@@ -52,3 +56,37 @@ def test_scenario_detects_bounds_exceeded_without_silent_corruption():
     # Clamped for display safety is 0.0
     assert res.projected_baseline_storage_tmc == 0.0
 
+
+def test_scenario_negative_flow_inputs_rejected():
+    with pytest.raises(ValueError, match="Assumed inflow cannot be negative"):
+        simulate_conservation_scenario(30.0, -100.0, 500.0, 500.0, 10.0)
+
+    with pytest.raises(ValueError, match="Planned outflow cannot be negative"):
+        simulate_conservation_scenario(30.0, 1000.0, -500.0, 500.0, 10.0)
+
+    with pytest.raises(ValueError, match="Baseline withdrawal cannot be negative"):
+        simulate_conservation_scenario(30.0, 1000.0, 500.0, -500.0, 10.0)
+
+
+def test_scenario_capacity_basis_alignment():
+    # Live storage basis uses live design capacity (45.051 TMC)
+    res_live = simulate_conservation_scenario(
+        current_storage_tmc=20.0,
+        assumed_inflow_cusecs=1000.0,
+        planned_outflow_cusecs=500.0,
+        baseline_withdrawal_cusecs=500.0,
+        reduction_percentage=10.0,
+        storage_basis="live_above_cill_tmc",
+    )
+    assert res_live.assumptions["capacity_denominator_tmc"] == KRS_DESIGN_LIVE_CAPACITY_TMC
+
+    # Gross storage basis uses gross design capacity (49.452 TMC)
+    res_gross = simulate_conservation_scenario(
+        current_storage_tmc=25.0,
+        assumed_inflow_cusecs=1000.0,
+        planned_outflow_cusecs=500.0,
+        baseline_withdrawal_cusecs=500.0,
+        reduction_percentage=10.0,
+        storage_basis="gross_capacity_tmc",
+    )
+    assert res_gross.assumptions["capacity_denominator_tmc"] == KRS_DESIGN_GROSS_CAPACITY_TMC
