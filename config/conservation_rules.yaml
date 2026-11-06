@@ -1,0 +1,27 @@
+# Layer B Conservation Decision-Support Configuration
+# Academic prototype rules - all thresholds are provisional and not official KRS operating bands.
+
+assessment:
+  trend_window_observations: 7
+  min_valid_observations: 5
+  storage_provisional_thresholds:
+    basis: "live_above_cill_tmc"
+    high_tmc: 35.0
+    watch_tmc: 20.0
+    low_tmc: 10.0
+  inflow_provisional_low_cusecs: 1500.0
+
+anomaly_detection:
+  method: "rolling_median_mad"
+  window_observations: 14
+  mad_multiplier: 3.0
+  min_samples: 7
+
+risk_assessment:
+  consecutive_storage_decline_days: 3
+  withdrawal_to_inflow_ratio_high: 1.5
+
+scenarios:
+  storage_basis: "live_above_cill_tmc"
+  standard_reductions_pct: [5.0, 10.0, 15.0, 20.0]
+  default_horizon_days: 7

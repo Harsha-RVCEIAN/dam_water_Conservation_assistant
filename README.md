@@ -181,3 +181,22 @@ The Random Forest model achieves an **11.30% reduction in RMSE** over the persis
 > - **Educational Prototype:** This tool is an academic demonstration for decision-support modeling. It is **not** an official dam safety, flood warning, or gate control system.
 > - **Unmodeled Hydrology:** Weather forecasts, localized heavy rainfall, upstream radar data, and dynamic flood routing waves are not included in statistical lag models.
 > - **Water Balance Discrepancies:** Departures from the simplified daily mass balance represent unmeasured catchment runoff, river timing lags, or gauge calibration factors. **They do not prove dam leakage.**
+
+---
+
+## 7. Layer B — Water Conservation Decision-Support Assistant
+
+Layer B adds a deterministic decision-support rule engine on top of Layer A's hydrological forecasting and mass-balance diagnostics:
+
+1. **Reservoir Condition Assessment:** Evaluates live storage trajectory, inflow, river outflow, and canal withdrawal trends across recent observations without inventing unverified capacity percentages.
+2. **Abnormal Flow & Water-Balance Review:** Applies robust Median Absolute Deviation (MAD) rolling filters to highlight unusual spikes while clearly distinguishing data-quality gaps from physical anomalies. Water-balance residuals are treated as mass-accounting flags, never as proof of physical leakage.
+3. **Shortage Risk Screening:** Identifies potential water stress from multi-day storage depletion and withdrawal/inflow imbalances without extrapolating one-day ML forecasts into unsupported long-term drought predictions.
+4. **Advisory Conservation Recommendations:** Produces prioritized, traceable recommendations (reviewing canal records, auditing stage-discharge curves, or checking telemetry) without prescribing gate operations or official allocation cuts.
+5. **Standardized Rationing Scenarios:** Compares hypothetical 5%, 10%, 15%, and 20% canal withdrawal reductions, calculating conserved volume ($TMC = \Delta flow \times 0.0000864 \times N$) and unclipped mathematical projections with boundary flags.
+
+### Launching the Assistant
+
+```powershell
+.\.venv\Scripts\python.exe -m streamlit run src/app.py
+```
+Open tab **"🛡️ Water Conservation Assistant"** to view real-time condition summaries, risk alerts, flow flags, and scenario comparisons.
