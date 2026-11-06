@@ -76,9 +76,12 @@ def load_forecaster() -> Optional[InflowForecaster]:
 
 def main() -> None:
     st.title("🌊 K.R.Sagara Dam - Water Conservation Assistant")
+
     st.markdown(
-        "**Student MLOps Project** &middot; Explainable Decision-Support Prototype &middot; *Cauvery Basin, Karnataka, India*  \n"
-        "*(Layer A Technical Stabilization Only &middot; Layer B Recommendations Excluded)*"
+        "**Student MLOps Project** · Explainable Decision-Support Prototype · "
+        "*Cauvery Basin, Karnataka, India*\n\n"
+        "*Layer A: Inflow Forecasting and MLOps Pipeline · "
+        "Layer B: Reservoir Assessment and Conservation Decision Support*"
     )
 
     df = load_processed_data()
@@ -659,43 +662,135 @@ def main() -> None:
 
         # 6. Conservation Scenario Comparisons (5%, 10%, 15%, 20%)
         st.markdown("#### 5. Hypothetical Withdrawal Rationing Scenarios")
-        st.write("Evaluate potential water savings across standardized canal withdrawal reductions (5%, 10%, 15%, 20%).")
+        st.write(
+            "Compare hypothetical water savings under 5%, 10%, 15%, "
+            "and 20% canal withdrawal reductions."
+        )
 
+        # Validate storage availability
         if cond_assessment.storage_value_tmc is None:
-            st.warning("⚠️ Live storage value is unavailable; hypothetical scenarios cannot be initiated without a valid initial storage volume.")
+            st.warning(
+                "Live storage is unavailable. Scenarios cannot be calculated "
+                "without a valid storage measurement."
+            )
+
+        # Ensure storage and flow readings belong to the same date
+        elif (
+            cond_assessment.storage_measurement_date is None
+            or pd.Timestamp(cond_assessment.storage_measurement_date).date()
+            != pd.Timestamp(latest_row["calendar_date"]).date()
+        ):
+            st.warning(
+                "Scenario calculation skipped: the latest valid storage "
+                "measurement and latest flow observation have different dates. "
+                "Using them together would produce an inconsistent simulation."
+            )
+
         else:
-            sc_inflow = float(latest_row.get("inflow_cusecs", 2000.0))
-            sc_outflow = float(latest_row.get("outflow_cusecs", 1000.0))
-            sc_with = float(latest_row.get("withdrawal_cusecs", 2500.0))
-            sc_storage = float(cond_assessment.storage_value_tmc)
+            # Validate actual observed flow values.
+            required_flow_columns = [
+                "inflow_cusecs",
+                "outflow_cusecs",
+                "withdrawal_cusecs",
+            ]
 
-            sim_scenarios = compare_conservation_scenarios(
-                current_storage_tmc=sc_storage,
-                assumed_inflow_cusecs=sc_inflow,
-                planned_outflow_cusecs=sc_outflow,
-                baseline_withdrawal_cusecs=sc_with,
-                reductions=[5.0, 10.0, 15.0, 20.0],
-                simulation_days=7,
-                evaporation_cusecs=0.0,
-                storage_basis=cond_assessment.storage_basis,
-            )
+            missing_columns = [
+                col for col in required_flow_columns
+                if col not in df.columns
+            ]
 
-            sc_table = []
-            for s in sim_scenarios:
-                sc_table.append({
-                    "Scenario": s.scenario_name,
-                    "Canal Withdrawal (cusecs)": round(s.conservation_withdrawal_cusecs, 1),
-                    "Daily Saved (TMC/day)": round(cusec_day_to_tmc(s.baseline_withdrawal_cusecs - s.conservation_withdrawal_cusecs), 5),
-                    "7-Day Conserved (TMC)": s.water_saved_tmc,
-                    "Raw Projected Storage (TMC)": s.raw_projected_scenario_tmc,
-                    "Bounds Flag": "OUT_OF_BOUNDS" if s.scenario_exceeds_bounds else "NORMAL",
-                })
-            st.dataframe(pd.DataFrame(sc_table), use_container_width=True)
-            st.caption(
-                f"Assumptions: 7-day constant flow; storage basis '{cond_assessment.storage_basis}' bounded against "
-                f"reference capacity of {KRS_DESIGN_LIVE_CAPACITY_TMC} TMC; unverified evaporation excluded (0.0 TMC); hypothetical non-operational simulation."
-            )
+            if missing_columns:
+                st.warning(
+                    "Scenario calculation skipped. Missing flow columns: "
+                    + ", ".join(missing_columns)
+                )
 
+            else:
+                flow_values = {
+                    col: pd.to_numeric(latest_row[col], errors="coerce")
+                    for col in required_flow_columns
+                }
+
+                flows_valid = all(
+                    pd.notna(value)
+                    and np.isfinite(float(value))
+                    and float(value) >= 0
+                    for value in flow_values.values()
+                )
+
+                if not flows_valid:
+                    st.warning(
+                        "Scenario calculation skipped because one or more "
+                        "observed flow values are missing, non-finite, "
+                        "or negative. No assumed values will be substituted."
+                    )
+
+                else:
+                    sc_inflow = float(flow_values["inflow_cusecs"])
+                    sc_outflow = float(flow_values["outflow_cusecs"])
+                    sc_with = float(flow_values["withdrawal_cusecs"])
+                    sc_storage = float(cond_assessment.storage_value_tmc)
+
+                    try:
+                        sim_scenarios = compare_conservation_scenarios(
+                            current_storage_tmc=sc_storage,
+                            assumed_inflow_cusecs=sc_inflow,
+                            planned_outflow_cusecs=sc_outflow,
+                            baseline_withdrawal_cusecs=sc_with,
+                            reductions=[5.0, 10.0, 15.0, 20.0],
+                            simulation_days=7,
+                            evaporation_cusecs=0.0,
+                            storage_basis=cond_assessment.storage_basis,
+                        )
+
+                        sc_table = []
+
+                        for scenario in sim_scenarios:
+                            daily_saved = cusec_day_to_tmc(
+                                scenario.baseline_withdrawal_cusecs
+                                - scenario.conservation_withdrawal_cusecs
+                            )
+
+                            sc_table.append({
+                                "Scenario": scenario.scenario_name,
+                                "Canal Withdrawal (cusecs)": round(
+                                    scenario.conservation_withdrawal_cusecs, 1
+                                ),
+                                "Daily Saved (TMC/day)": round(
+                                    daily_saved, 5
+                                ),
+                                "7-Day Conserved (TMC)": round(
+                                    scenario.water_saved_tmc, 5
+                                ),
+                                "Raw Projected Storage (TMC)": round(
+                                    scenario.raw_projected_scenario_tmc, 3
+                                ),
+                                "Bounds Flag": (
+                                    "OUT_OF_BOUNDS"
+                                    if scenario.scenario_exceeds_bounds
+                                    else "NORMAL"
+                                ),
+                            })
+
+                        st.dataframe(
+                            pd.DataFrame(sc_table),
+                            use_container_width=True,
+                        )
+
+                        st.caption(
+                            f"Observed flow date: "
+                            f"{latest_date_str}. Simulation horizon: 7 days. "
+                            f"Storage basis: {cond_assessment.storage_basis}. "
+                            "Evaporation is excluded because its measurement "
+                            "convention is unverified; this does NOT mean "
+                            "actual evaporation is zero. Results are hypothetical "
+                            "and are not operational recommendations."
+                        )
+
+                    except (ValueError, TypeError, KeyError) as exc:
+                        st.error(
+                            f"Scenario simulation could not be completed: {exc}"
+                        )
 
 if __name__ == "__main__":
     main()

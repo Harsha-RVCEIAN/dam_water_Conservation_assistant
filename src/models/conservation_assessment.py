@@ -49,7 +49,7 @@ def _load_config() -> Dict[str, Any]:
 
 @dataclass
 class ReservoirConditionAssessment:
-    condition: str  # SURPLUS, NORMAL, WATCH, HIGH_RISK, INSUFFICIENT_DATA
+    condition: str  # HIGH_STORAGE, NORMAL, WATCH, HIGH_RISK, INSUFFICIENT_DATA
     observation_date: Optional[str]
     storage_measurement_date: Optional[str]
     data_age_days: Optional[int]
@@ -229,13 +229,27 @@ def assess_reservoir_condition(
         )
 
     # Count consecutive storage decline days
-    storage_diffs = valid_storage_rows[storage_basis].diff().dropna().tolist()
+    valid_storage_rows = valid_storage_rows.sort_values("calendar_date")
+
     consecutive_declines = 0
-    for diff in reversed(storage_diffs):
-        if diff < 0:
-            consecutive_declines += 1
-        else:
+
+    for i in range(len(valid_storage_rows) - 1, 0, -1):
+
+        current = valid_storage_rows.iloc[i]
+        previous = valid_storage_rows.iloc[i - 1]
+
+        date_gap = (
+            current["calendar_date"] - previous["calendar_date"]
+        ).days
+
+        storage_change = (
+            current[storage_basis] - previous[storage_basis]
+        )
+
+        if date_gap != 1 or storage_change >= 0:
             break
+
+        consecutive_declines += 1
 
     # Trends
     s_trend = _calculate_trend(valid_storage_series)
@@ -255,7 +269,7 @@ def assess_reservoir_condition(
     elif latest_storage <= watch_tmc:
         condition = "WATCH"
     elif latest_storage >= high_tmc:
-        condition = "SURPLUS"
+        condition = "HIGH_STORAGE"
     else:
         condition = "NORMAL"
 
@@ -291,188 +305,406 @@ def detect_abnormal_flow_patterns(
     columns: Optional[List[str]] = None,
     config: Optional[Dict[str, Any]] = None,
 ) -> List[FlowAnomalyFlag]:
-    """Detect unusual flow patterns using robust rolling Median Absolute Deviation (MAD).
+    """
+    Detect unusual flow patterns using rolling Median Absolute Deviation.
 
-    Prevents self-contamination by using shifted historical baseline (shift(1)) and
-    enforces minimum sample size against valid historical observations.
+    Features:
+    - Uses only preceding observations for the baseline.
+    - Excludes negative and non-finite historical flow readings.
+    - Enforces a minimum valid historical sample count.
+    - Handles missing and invalid current readings as data-quality flags.
+    - Does not interpret statistical anomalies as physical leakage.
     """
     if config is None:
         config = _load_config()
     cfg_anom = config.get("anomaly_detection", {})
-    window_obs = cfg_anom.get("window_observations", cfg_anom.get("window_days", 14))
-    mad_multiplier = cfg_anom.get("mad_multiplier", 3.0)
-    min_samples = cfg_anom.get("min_samples", 7)
-
-    if columns is None:
-        columns = [c for c in ["inflow_cusecs", "outflow_cusecs", "withdrawal_cusecs"] if c in df.columns]
-
-    flags: List[FlowAnomalyFlag] = []
+    window_obs = int(
+        cfg_anom.get(
+            "window_observations",
+            cfg_anom.get("window_days", 14),
+        )
+    )
+    mad_multiplier = float(cfg_anom.get("mad_multiplier", 3.0))
+    min_samples = int(cfg_anom.get("min_samples", 7))
+    if window_obs < 1:
+        raise ValueError("Anomaly window must be at least 1.")
+    if min_samples < 1 or min_samples > window_obs:
+        raise ValueError(
+            "Minimum samples must be between 1 and the rolling window size."
+        )
+    if not np.isfinite(mad_multiplier) or mad_multiplier <= 0:
+        raise ValueError("MAD multiplier must be finite and positive.")
     if df.empty or "calendar_date" not in df.columns:
+        return []
+    if columns is None:
+        columns = [
+            col
+            for col in [
+                "inflow_cusecs",
+                "outflow_cusecs",
+                "withdrawal_cusecs",
+            ]
+            if col in df.columns
+        ]
+    flags: List[FlowAnomalyFlag] = []
+    df_work = df.copy()
+    df_work["calendar_date"] = pd.to_datetime(
+        df_work["calendar_date"],
+        errors="coerce",
+    )
+    df_work = (
+        df_work.dropna(subset=["calendar_date"])
+        .sort_values("calendar_date")
+        .reset_index(drop=True)
+    )
+    if df_work.empty:
         return flags
-
-    df_work = df.copy().sort_values("calendar_date").reset_index(drop=True)
-
+    # Inspect only the most recent seven observations.
+    tail_start = max(0, len(df_work) - 7)
     for col in columns:
-        series = df_work[col]
-        # Shift series by 1 so the current observation does not contribute to its own baseline
-        hist_series = series.shift(1)
-        rolling_median = hist_series.rolling(window=window_obs, min_periods=min_samples).median()
-        rolling_dev = (hist_series - rolling_median).abs()
-        rolling_mad = rolling_dev.rolling(window=window_obs, min_periods=min_samples).median()
-
-        # Check recent window observations (last 7 rows)
-        tail_idx = df_work.index[-7:]
-        for idx in tail_idx:
+        if col not in df_work.columns:
+            continue
+        # Convert invalid strings and values to NaN.
+        series = pd.to_numeric(
+            df_work[col],
+            errors="coerce",
+        ).astype(float)
+        # Negative and infinite readings are invalid.
+        invalid_mask = (
+            ~np.isfinite(series)
+            | (series < 0)
+        )
+        # Valid historical flow observations only.
+        valid_series = series.where(~invalid_mask)
+        # Shift baseline to exclude current observation.
+        hist_series = valid_series.shift(1)
+        # Rolling historical median.
+        rolling_median = hist_series.rolling(
+            window=window_obs,
+            min_periods=min_samples,
+        ).median()
+        # Median absolute deviation.
+        absolute_deviation = (
+            hist_series - rolling_median
+        ).abs()
+        rolling_mad = absolute_deviation.rolling(
+            window=window_obs,
+            min_periods=min_samples,
+        ).median()
+        for idx in range(tail_start, len(df_work)):
             val = series.iloc[idx]
-            if pd.isna(val):
+            observation_date = (
+                df_work["calendar_date"].iloc[idx].strftime("%Y-%m-%d")
+            )
+            # Invalid current observation
+            if invalid_mask.iloc[idx]:
+                if pd.isna(val):
+                    reason = f"Missing or non-numeric observation in {col}."
+                elif not np.isfinite(val):
+                    reason = f"Non-finite observation in {col}."
+                else:
+                    reason = f"Negative flow observation in {col}."
                 flags.append(
                     FlowAnomalyFlag(
                         metric=col,
-                        date=str(df_work["calendar_date"].iloc[idx])[:10],
-                        observed_value=np.nan,
+                        date=observation_date,
+                        observed_value=(
+                            float(val) if pd.notna(val) and np.isfinite(val)
+                            else np.nan
+                        ),
                         baseline_median=np.nan,
                         threshold_mad=np.nan,
                         flag_type="DATA_QUALITY",
-                        reason=f"Missing observation in {col}.",
+                        reason=reason,
                     )
                 )
                 continue
-
-            # Ensure minimum sample count in the preceding historical window
+            # Count valid preceding historical observations.
             start_window_idx = max(0, idx - window_obs)
-            valid_hist_count = hist_series.iloc[start_window_idx:idx].notna().sum()
+            historical_values = valid_series.iloc[
+                start_window_idx:idx
+            ]
+            valid_hist_count = historical_values.notna().sum()
             if valid_hist_count < min_samples:
                 continue
-
-            med = rolling_median.iloc[idx]
-            mad = rolling_mad.iloc[idx]
-            if pd.isna(med):
+            median_value = rolling_median.iloc[idx]
+            mad_value = rolling_mad.iloc[idx]
+            if pd.isna(median_value):
                 continue
-
-            scale = mad * 1.4826 if not pd.isna(mad) and mad > 0 else 0.1 * abs(med)
-            if scale == 0.0:
-                scale = 50.0  # Minimal flow floor
+            # Robust scale estimate.
+            if pd.notna(mad_value) and mad_value > 0:
+                scale = 1.4826 * mad_value
+            else:
+                # Fallback when historical values have zero MAD.
+                scale = 0.1 * abs(median_value)
+            # Minimum threshold for constant or zero-flow baselines.
+            if scale == 0:
+                scale = 50.0
             threshold = mad_multiplier * scale
-            deviation = abs(val - med)
-
+            deviation = abs(val - median_value)
             if deviation > threshold:
                 flags.append(
                     FlowAnomalyFlag(
                         metric=col,
-                        date=str(df_work["calendar_date"].iloc[idx])[:10],
+                        date=observation_date,
                         observed_value=float(val),
-                        baseline_median=float(med),
+                        baseline_median=float(median_value),
                         threshold_mad=float(threshold),
                         flag_type="UNUSUAL_FLOW",
-                        reason=f"{col} value ({val:.1f}) deviates by {deviation:.1f} from historical baseline median ({med:.1f}).",
+                        reason=(
+                            f"{col} value ({val:.1f} cfs) deviates by "
+                            f"{deviation:.1f} cfs from the historical "
+                            f"median ({median_value:.1f} cfs)."
+                        ),
                     )
                 )
     return flags
 
 
-def assess_water_shortage_risk(
-    condition: ReservoirConditionAssessment,
-    inflow_forecast_cfs: Optional[float] = None,
-    forecast_target_date: Optional[str] = None,
-    config: Optional[Dict[str, Any]] = None,
-) -> ShortageRiskAssessment:
-    """Assess potential water-shortage risk from evidence without unsupported extrapolation.
+    def assess_water_shortage_risk(
+        condition: ReservoirConditionAssessment,
+        inflow_forecast_cfs: Optional[float] = None,
+        forecast_target_date: Optional[str] = None,
+        config: Optional[Dict[str, Any]] = None,
+    ) -> ShortageRiskAssessment:
+        """
+        Assess potential water-shortage risk using available reservoir evidence.
 
-    Integrates consecutive_storage_decline_days from configuration.
-    """
-    if config is None:
-        config = _load_config()
-    cfg_risk = config.get("risk_assessment", {})
-    ratio_high_thresh = cfg_risk.get("withdrawal_to_inflow_ratio_high", 1.5)
-    decline_days_thresh = cfg_risk.get("consecutive_storage_decline_days", 3)
+        Uses:
+        - Provisional storage condition
+        - Consecutive calendar-day storage declines
+        - Recent withdrawal-to-inflow ratio
+        - Optional one-day inflow forecast
 
-    limitations = [
-        "Advisory screening: does not constitute an official drought or shortage declaration.",
-        "One-day forecast informs next-day transition only; does not forecast multi-week water availability.",
-    ]
+        This is an advisory screening tool, not an official shortage declaration.
+        """
 
-    if condition.condition == "INSUFFICIENT_DATA":
-        return ShortageRiskAssessment(
-            risk_level="INSUFFICIENT_DATA",
-            risk_reasons=["Baseline reservoir condition cannot be established due to insufficient data."],
-            supporting_metrics={},
-            suggested_review_action="Verify and update daily dam telemetry before performing shortage risk screening.",
-            data_quality_status="INCOMPLETE",
-            limitations=limitations,
+        if config is None:
+            config = _load_config()
+
+        cfg_risk = config.get("risk_assessment", {})
+        cfg_assessment = config.get("assessment", {})
+
+        ratio_high_thresh = float(
+            cfg_risk.get("withdrawal_to_inflow_ratio_high", 1.5)
+        )
+        decline_days_thresh = int(
+            cfg_risk.get("consecutive_storage_decline_days", 3)
+        )
+        low_inflow_ref = float(
+            cfg_assessment.get("inflow_provisional_low_cusecs", 1500.0)
         )
 
-    risk_reasons: List[str] = []
-    score = 0
+        limitations = [
+            "Advisory screening only; does not constitute an official drought or water-shortage declaration.",
+            "A one-day inflow forecast informs only the next-day transition and does not predict multi-week water availability.",
+            "Storage thresholds are provisional and must not be interpreted as official reservoir operating levels.",
+        ]
 
-    # Evidence 1: Storage Level
-    if condition.condition == "HIGH_RISK":
-        score += 3
-        risk_reasons.append(f"Storage ({condition.storage_value_tmc:.2f} TMC) is at or below provisional low threshold.")
-    elif condition.condition == "WATCH":
-        score += 1
-        risk_reasons.append(f"Storage ({condition.storage_value_tmc:.2f} TMC) is in provisional watch band.")
+        # Validate configuration
+        if (
+            not np.isfinite(ratio_high_thresh)
+            or ratio_high_thresh <= 0
+            or decline_days_thresh < 1
+            or not np.isfinite(low_inflow_ref)
+            or low_inflow_ref < 0
+        ):
+            raise ValueError("Invalid shortage-risk configuration values.")
 
-    # Evidence 2: Storage Trend & Consecutive Decline Days
-    consec_declines = condition.evidence.get("consecutive_storage_decline_days", 0)
-    if consec_declines >= decline_days_thresh:
-        score += 1
-        risk_reasons.append(
-            f"Live storage has declined for {consec_declines} consecutive observations (>= {decline_days_thresh} days configured)."
-        )
-    elif condition.storage_trend == "DECLINING":
-        score += 1
-        risk_reasons.append("Live storage is exhibiting a declining trajectory across recent observations.")
-
-    # Evidence 3: Withdrawal vs Inflow Balance
-    mean_inflow = condition.evidence.get("mean_inflow_cusecs")
-    mean_with = condition.evidence.get("mean_withdrawal_cusecs")
-    if mean_inflow is not None and mean_with is not None and mean_inflow > 0:
-        ratio = mean_with / mean_inflow
-        if ratio > ratio_high_thresh:
-            score += 1
-            risk_reasons.append(f"Canal withdrawal exceeds inflow by {ratio:.2f}x in the recent observation window.")
-
-    # Evidence 4: One-day forecast
-    is_forecast_based = False
-    if inflow_forecast_cfs is not None:
-        is_forecast_based = True
-        low_inflow_ref = config.get("assessment", {}).get("inflow_provisional_low_cusecs", 1500.0)
-        if inflow_forecast_cfs < low_inflow_ref:
-            score += 1
-            risk_reasons.append(
-                f"Next-day forecast inflow ({inflow_forecast_cfs:.1f} cfs) is below reference ({low_inflow_ref:.0f} cfs)."
+        # Insufficient historical data
+        if condition.condition == "INSUFFICIENT_DATA":
+            return ShortageRiskAssessment(
+                risk_level="INSUFFICIENT_DATA",
+                risk_reasons=[
+                    "Baseline reservoir condition cannot be established due to insufficient data."
+                ],
+                supporting_metrics={},
+                suggested_review_action=(
+                    "Verify and update reservoir observations before performing shortage-risk screening."
+                ),
+                data_quality_status="INCOMPLETE",
+                limitations=limitations,
             )
 
-    # Risk level classification
-    if score >= 4:
-        risk_level = "HIGH"
-        action = "Initiate immediate operational review of planned canal withdrawals and prepare contingency scenarios."
-    elif score >= 2:
-        risk_level = "MEDIUM"
-        action = "Monitor daily storage changes closely and evaluate voluntary withdrawal-reduction scenarios."
-    else:
-        risk_level = "LOW"
-        action = "Maintain regular monitoring schedule."
+        # Do not present stale data as current risk.
+        stale_statuses = {"STALE", "HISTORICAL_ARCHIVE"}
 
-    if condition.data_freshness in ["STALE", "HISTORICAL_ARCHIVE"]:
-        limitations.append(
-            f"Assessment reflects historical state as of {condition.observation_date}, not current real-time condition."
+        if condition.data_freshness in stale_statuses:
+            limitations.append(
+                f"Assessment reflects historical observations as of "
+                f"{condition.observation_date}, not the current reservoir condition."
+            )
+
+            return ShortageRiskAssessment(
+                risk_level="HISTORICAL_ONLY",
+                risk_reasons=[
+                    "Current shortage risk cannot be reliably assessed because the latest observations are stale."
+                ],
+                supporting_metrics={
+                    "observation_date": condition.observation_date,
+                    "storage_measurement_date": condition.storage_measurement_date,
+                    "storage_tmc": condition.storage_value_tmc,
+                    "data_freshness": condition.data_freshness,
+                },
+                suggested_review_action=(
+                    "Obtain updated reservoir storage and flow observations before making a current risk assessment."
+                ),
+                data_quality_status=condition.data_freshness,
+                limitations=limitations,
+            )
+
+        risk_reasons: List[str] = []
+        score = 0
+
+        # Evidence 1: Storage level
+        if condition.condition == "HIGH_RISK":
+            score += 3
+
+            if condition.storage_value_tmc is not None:
+                risk_reasons.append(
+                    f"Storage ({condition.storage_value_tmc:.2f} TMC) "
+                    "is at or below the provisional low threshold."
+                )
+            else:
+                risk_reasons.append(
+                    "Reservoir condition indicates a provisional high-risk storage level."
+                )
+
+        elif condition.condition == "WATCH":
+            score += 1
+
+            if condition.storage_value_tmc is not None:
+                risk_reasons.append(
+                    f"Storage ({condition.storage_value_tmc:.2f} TMC) "
+                    "is within the provisional watch band."
+                )
+            else:
+                risk_reasons.append(
+                    "Reservoir condition indicates a provisional storage watch level."
+                )
+
+        # Evidence 2: Consecutive calendar-day storage declines
+        consec_declines = condition.evidence.get(
+            "consecutive_storage_decline_days", 0
         )
 
-    return ShortageRiskAssessment(
-        risk_level=risk_level,
-        risk_reasons=risk_reasons,
-        supporting_metrics={
-            "score": score,
-            "observation_date": condition.observation_date,
-            "storage_measurement_date": condition.storage_measurement_date,
-            "storage_tmc": condition.storage_value_tmc,
-            "forecast_inflow_cfs": inflow_forecast_cfs,
-            "consecutive_storage_decline_days": consec_declines,
-        },
-        suggested_review_action=action,
-        data_quality_status=condition.data_freshness,
-        is_forecast_based=is_forecast_based,
-        forecast_target_date=forecast_target_date,
-        limitations=limitations,
-    )
+        try:
+            consec_declines = int(consec_declines)
+        except (TypeError, ValueError):
+            consec_declines = 0
+
+        if consec_declines >= decline_days_thresh:
+            score += 1
+
+            risk_reasons.append(
+                f"Live storage has declined for {consec_declines} "
+                f"consecutive calendar days "
+                f"(configured threshold: {decline_days_thresh} days)."
+            )
+
+        elif condition.storage_trend == "DECLINING":
+            score += 1
+
+            risk_reasons.append(
+                "Live storage is exhibiting a declining trajectory across recent observations."
+            )
+
+        # Evidence 3: Withdrawal-to-inflow ratio
+        mean_inflow = condition.evidence.get("mean_inflow_cusecs")
+        mean_with = condition.evidence.get("mean_withdrawal_cusecs")
+
+        if mean_inflow is not None and mean_with is not None:
+            try:
+                mean_inflow = float(mean_inflow)
+                mean_with = float(mean_with)
+
+                if (
+                    np.isfinite(mean_inflow)
+                    and np.isfinite(mean_with)
+                    and mean_inflow > 0
+                    and mean_with >= 0
+                ):
+                    ratio = mean_with / mean_inflow
+
+                    if ratio > ratio_high_thresh:
+                        score += 1
+
+                        risk_reasons.append(
+                            f"Recent canal withdrawal is {ratio:.2f}x "
+                            "the mean inflow rate."
+                        )
+
+            except (TypeError, ValueError, ZeroDivisionError):
+                pass
+
+        # Evidence 4: Optional one-day inflow forecast
+        is_forecast_based = False
+        valid_forecast = None
+
+        if inflow_forecast_cfs is not None:
+            try:
+                candidate_forecast = float(inflow_forecast_cfs)
+
+                if (
+                    np.isfinite(candidate_forecast)
+                    and candidate_forecast >= 0
+                ):
+                    valid_forecast = candidate_forecast
+                    is_forecast_based = True
+
+            except (TypeError, ValueError):
+                valid_forecast = None
+
+        if valid_forecast is not None:
+            if valid_forecast < low_inflow_ref:
+                score += 1
+
+                risk_reasons.append(
+                    f"Next-day forecast inflow ({valid_forecast:.1f} cfs) "
+                    f"is below the provisional reference "
+                    f"({low_inflow_ref:.0f} cfs)."
+                )
+
+        # Risk classification
+        if score >= 4:
+            risk_level = "HIGH"
+            action = (
+                "Review recent storage, inflow and withdrawal trends. "
+                "Evaluate conservation scenarios with the relevant reservoir authorities."
+            )
+
+        elif score >= 2:
+            risk_level = "MEDIUM"
+            action = (
+                "Monitor updated storage and flow observations and "
+                "evaluate hypothetical withdrawal-reduction scenarios."
+            )
+
+        else:
+            risk_level = "LOW"
+            action = (
+                "Maintain regular monitoring and verify incoming reservoir observations."
+            )
+
+        return ShortageRiskAssessment(
+            risk_level=risk_level,
+            risk_reasons=risk_reasons,
+            supporting_metrics={
+                "score": score,
+                "observation_date": condition.observation_date,
+                "storage_measurement_date": condition.storage_measurement_date,
+                "storage_tmc": condition.storage_value_tmc,
+                "mean_inflow_cusecs": mean_inflow,
+                "mean_withdrawal_cusecs": mean_with,
+                "withdrawal_to_inflow_threshold": ratio_high_thresh,
+                "forecast_inflow_cfs": valid_forecast,
+                "consecutive_storage_decline_days": consec_declines,
+            },
+            suggested_review_action=action,
+            data_quality_status=condition.data_freshness,
+            is_forecast_based=is_forecast_based,
+            forecast_target_date=(
+                forecast_target_date if is_forecast_based else None
+            ),
+            limitations=limitations,
+        )

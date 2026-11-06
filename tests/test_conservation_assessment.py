@@ -84,7 +84,7 @@ def test_assess_reservoir_condition_surplus():
         "withdrawal_cusecs": [1000.0] * 7,
     })
     res = assess_reservoir_condition(df)
-    assert res.condition == "SURPLUS"
+    assert res.condition == "HIGH_STORAGE"
     assert res.storage_trend == "RISING"
 
 
