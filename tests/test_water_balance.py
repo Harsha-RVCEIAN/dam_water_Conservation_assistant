@@ -109,3 +109,81 @@ def test_river_and_canal_are_both_subtracted_separately():
     assert res.observed_storage_change_tmc == pytest.approx(0.0, abs=1e-6)
     assert res.balance_discrepancy_tmc == pytest.approx(0.0, abs=1e-6)
 
+
+def test_negative_and_nan_inputs_yield_incomplete():
+    import numpy as np
+
+    # Negative inflow
+    res_inflow = compute_water_balance_interval(
+        "2020-01-01", "2020-01-02", 30.0, 30.0, -100.0, 50.0, 50.0, 0.0, evaporation_verified=True
+    )
+    assert res_inflow.status == "INCOMPLETE"
+    assert "invalid_inflow" in res_inflow.reasons
+
+    # Negative outflow
+    res_outflow = compute_water_balance_interval(
+        "2020-01-01", "2020-01-02", 30.0, 30.0, 100.0, -50.0, 50.0, 0.0, evaporation_verified=True
+    )
+    assert res_outflow.status == "INCOMPLETE"
+    assert "invalid_river_outflow" in res_outflow.reasons
+
+    # Negative withdrawal
+    res_with = compute_water_balance_interval(
+        "2020-01-01", "2020-01-02", 30.0, 30.0, 100.0, 50.0, -50.0, 0.0, evaporation_verified=True
+    )
+    assert res_with.status == "INCOMPLETE"
+    assert "invalid_canal_withdrawal" in res_with.reasons
+
+    # Negative evaporation
+    res_evap = compute_water_balance_interval(
+        "2020-01-01", "2020-01-02", 30.0, 30.0, 100.0, 50.0, 50.0, -10.0, evaporation_verified=True
+    )
+    assert res_evap.status == "INCOMPLETE"
+    assert "invalid_evaporation" in res_evap.reasons
+
+    # Negative start storage
+    res_start = compute_water_balance_interval(
+        "2020-01-01", "2020-01-02", -5.0, 30.0, 100.0, 50.0, 50.0, 0.0, evaporation_verified=True
+    )
+    assert res_start.status == "INCOMPLETE"
+    assert "invalid_start_storage" in res_start.reasons
+
+    # NaN / infinite inputs
+    res_nan = compute_water_balance_interval(
+        "2020-01-01", "2020-01-02", np.nan, 30.0, np.inf, 50.0, 50.0, 0.0, evaporation_verified=True
+    )
+    assert res_nan.status == "INCOMPLETE"
+    assert any("start_storage" in r for r in res_nan.reasons)
+    assert "invalid_inflow" in res_nan.reasons
+
+
+def test_invalid_date_conditions_yield_incomplete():
+    # Same start and end date
+    res_same = compute_water_balance_interval(
+        "2020-01-01", "2020-01-01", 30.0, 30.0, 100.0, 50.0, 50.0, 0.0, evaporation_verified=True
+    )
+    assert res_same.status == "INCOMPLETE"
+    assert "same_start_and_end_date" in res_same.reasons
+
+    # Reversed dates
+    res_rev = compute_water_balance_interval(
+        "2020-01-05", "2020-01-01", 30.0, 30.0, 100.0, 50.0, 50.0, 0.0, evaporation_verified=True
+    )
+    assert res_rev.status == "INCOMPLETE"
+    assert "reversed_interval_dates" in res_rev.reasons
+
+    # Missing dates
+    res_miss = compute_water_balance_interval(
+        None, "2020-01-02", 30.0, 30.0, 100.0, 50.0, 50.0, 0.0, evaporation_verified=True
+    )
+    assert res_miss.status == "INCOMPLETE"
+    assert "invalid_or_missing_interval_dates" in res_miss.reasons
+
+    # Unsupported storage basis
+    res_basis = compute_water_balance_interval(
+        "2020-01-01", "2020-01-02", 30.0, 30.0, 100.0, 50.0, 50.0, 0.0, storage_basis="unsupported_basis"
+    )
+    assert res_basis.status == "INCOMPLETE"
+    assert "unsupported_storage_basis" in res_basis.reasons
+
+

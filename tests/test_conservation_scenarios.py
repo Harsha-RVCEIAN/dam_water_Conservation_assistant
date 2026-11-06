@@ -90,3 +90,42 @@ def test_scenario_capacity_basis_alignment():
         storage_basis="gross_capacity_tmc",
     )
     assert res_gross.assumptions["capacity_denominator_tmc"] == KRS_DESIGN_GROSS_CAPACITY_TMC
+
+
+def test_scenario_initial_storage_exceeds_capacity():
+    # Initial live storage > 45.051 TMC must raise ValueError
+    with pytest.raises(ValueError, match="exceeds capacity limit"):
+        simulate_conservation_scenario(
+            current_storage_tmc=48.0,
+            assumed_inflow_cusecs=1000.0,
+            planned_outflow_cusecs=500.0,
+            baseline_withdrawal_cusecs=500.0,
+            reduction_percentage=10.0,
+            storage_basis="live_above_cill_tmc",
+        )
+
+
+def test_scenario_nan_and_infinite_inputs_rejected():
+    import numpy as np
+
+    with pytest.raises(ValueError, match="must be a finite number"):
+        simulate_conservation_scenario(np.nan, 1000.0, 500.0, 500.0, 10.0)
+
+    with pytest.raises(ValueError, match="must be a finite number"):
+        simulate_conservation_scenario(30.0, np.inf, 500.0, 500.0, 10.0)
+
+    with pytest.raises(ValueError, match="must be a finite number"):
+        simulate_conservation_scenario(30.0, 1000.0, 500.0, 500.0, 10.0, evaporation_cusecs=np.nan)
+
+
+def test_scenario_invalid_storage_basis_and_capacity():
+    with pytest.raises(ValueError, match="Unsupported storage basis"):
+        simulate_conservation_scenario(
+            30.0, 1000.0, 500.0, 500.0, 10.0, storage_basis="unsupported_basis"
+        )
+
+    with pytest.raises(ValueError, match="Design capacity limit must be positive"):
+        simulate_conservation_scenario(
+            30.0, 1000.0, 500.0, 500.0, 10.0, design_capacity_tmc=-10.0
+        )
+

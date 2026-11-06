@@ -35,6 +35,10 @@ from src.models.water_budget import (
     cusec_day_to_tmc,
     simulate_conservation_scenario,
 )
+from src.services.ai_advisor import (
+    generate_ai_conservation_briefing,
+    is_gemini_configured,
+)
 
 PROCESSED_DATA_PATH = Path("data/processed/krs_dam_processed.csv")
 RAW_DATA_PATH = Path("data/raw/krs_dam_dataset.csv")
@@ -73,6 +77,54 @@ def load_forecaster() -> Optional[InflowForecaster]:
 
 
 def main() -> None:
+    # Custom CSS for enhanced UI styling
+    st.markdown(
+        """
+        <style>
+        .report-card {
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 18px 22px;
+            background: #ffffff;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            margin-bottom: 16px;
+        }
+        .metric-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 9999px;
+            font-size: 0.82rem;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+        }
+        .badge-red { background-color: #fee2e2; color: #991b1b; border: 1px solid #f87171; }
+        .badge-amber { background-color: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
+        .badge-green { background-color: #dcfce7; color: #166534; border: 1px solid #86efac; }
+        .badge-blue { background-color: #e0e7ff; color: #3730a3; border: 1px solid #a5b4fc; }
+        .badge-gray { background-color: #f3f4f6; color: #374151; border: 1px solid #d1d5db; }
+        .advisory-box {
+            background-color: #f8fafc;
+            border: 1px solid #cbd5e1;
+            border-left: 5px solid #2563eb;
+            border-radius: 8px;
+            padding: 16px 20px;
+            margin: 12px 0;
+            line-height: 1.6;
+        }
+        .leakage-disclaimer-card {
+            background-color: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            border-left: 4px solid #16a34a;
+            border-radius: 6px;
+            padding: 12px 16px;
+            margin: 10px 0;
+            font-size: 0.9rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     st.title("🌊 K.R.Sagara Dam - Water Conservation Assistant")
 
     st.markdown(
@@ -632,6 +684,7 @@ def main() -> None:
         # Water-balance interval diagnostic for recommendations
         wb_status = None
         wb_disc = None
+        wb_calc = None
         if len(df) >= 2:
             row_prev = df.iloc[-2]
             row_curr = df.iloc[-1]
@@ -687,6 +740,8 @@ def main() -> None:
             "Compare hypothetical water savings under 5%, 10%, 15%, "
             "and 20% canal withdrawal reductions."
         )
+
+        sim_scenarios = []
 
         # Validate storage availability
         if cond_assessment.storage_value_tmc is None:
@@ -812,6 +867,50 @@ def main() -> None:
                         st.error(
                             f"Scenario simulation could not be completed: {exc}"
                         )
+
+        # ---------------------------------------------------------
+        # 7. AI Executive Conservation Briefing
+        # ---------------------------------------------------------
+        st.markdown("---")
+        st.markdown("#### 6. 🤖 Explainable AI Executive Conservation Briefing")
+        st.markdown(
+            "Natural language synthesis of deterministic reservoir condition, "
+            "shortage risk, statistical anomalies, and hypothetical rationing scenarios."
+        )
+
+        gemini_ready = is_gemini_configured()
+        if gemini_ready:
+            st.success(
+                "🟢 **Google Gemini Connected** (`gemini-2.5-flash` active). "
+                "Briefing synthesized with full guardrails & disclaimers."
+            )
+        else:
+            st.info(
+                "ℹ️ **Deterministic Briefing Engine Active** · To connect Google Gemini, "
+                "add your `GEMINI_API_KEY` to the `.env` file in the project root."
+            )
+
+        diag_res_val = None
+        if wb_calc is not None:
+            diag_res_val = wb_calc.diagnostic_residual_excluding_evap_tmc
+
+        ai_res = generate_ai_conservation_briefing(
+            condition=cond_assessment,
+            risk=risk_assessment,
+            recommendations=recs,
+            anomalies=flow_anomalies,
+            water_balance_status=wb_status,
+            water_balance_discrepancy_tmc=wb_disc,
+            diagnostic_residual_tmc=diag_res_val,
+            scenario_results=sim_scenarios if sim_scenarios else None,
+            forecast_inflow_cusecs=forecast_inflow,
+            forecast_target_date=target_dt,
+        )
+
+        with st.container():
+            source_badge = "Google Gemini 2.5 Flash" if ai_res.get("source") == "gemini" else "Deterministic Synthesis Engine"
+            st.markdown(f"**Briefing Engine:** `{source_badge}` &middot; Model: `{ai_res.get('model', 'rule-synthesis')}`")
+            st.markdown(ai_res.get("briefing", ""))
 
 if __name__ == "__main__":
     main()
