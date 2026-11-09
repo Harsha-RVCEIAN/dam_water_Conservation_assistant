@@ -29,9 +29,8 @@ plt.rcParams.update({
 })
 
 REPORTS_FIG_DIR = Path("reports/figures")
-BRAIN_FIG_DIR = Path(r"C:\Users\harsh\.gemini\antigravity-ide\brain\bb1ce316-45e9-47cf-9b75-e772b241fecb\figures")
 REPORTS_FIG_DIR.mkdir(parents=True, exist_ok=True)
-BRAIN_FIG_DIR.mkdir(parents=True, exist_ok=True)
+BRAIN_FIG_DIR = REPORTS_FIG_DIR
 
 def generate_tracking_figure() -> Path:
     """Generate composite 4-panel MLOps Experiment Tracking dashboard figure."""

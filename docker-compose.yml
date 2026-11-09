@@ -1,0 +1,47 @@
+version: "3.8"
+
+services:
+  fastapi-inference:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: krs_dam_fastapi
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - MLFLOW_TRACKING_URI=http://mlflow-server:5000
+    restart: unless-stopped
+    depends_on:
+      - mlflow-server
+
+  streamlit-dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: krs_dam_streamlit
+    command: ["streamlit", "run", "src/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+    ports:
+      - "8501:8501"
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+
+  mlflow-server:
+    image: ghcr.io/mlflow/mlflow:v2.14.3
+    container_name: krs_dam_mlflow
+    command: >
+      mlflow server
+      --backend-store-uri sqlite:///mlflow.db
+      --default-artifact-root /mlruns
+      --host 0.0.0.0
+      --port 5000
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow_data:/mlruns
+      - ./mlflow.db:/mlflow.db
+    restart: unless-stopped
+
+volumes:
+  mlflow_data:

@@ -1,0 +1,65 @@
+name: Phase 2 CI/CD Pipeline - KRS Dam Inflow Forecaster
+
+on:
+  push:
+    branches: [ master, main, hadi ]
+  pull_request:
+    branches: [ master, main, hadi ]
+
+jobs:
+  test_and_quality_gate:
+    name: Model Quality Gate & Test Suite
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install fastapi "uvicorn[standard]" httpx
+
+      - name: Run automated test suite
+        run: |
+          pytest -v --tb=short
+
+      - name: Execute pre-deployment model quality & risk gate
+        run: |
+          python -m src.models.evaluate_gate
+
+  docker_build_and_smoke_test:
+    name: Docker Build & Container Smoke Test
+    needs: test_and_quality_gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build FastAPI container image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: krs-dam-inflow-api:latest
+          load: true
+
+      - name: Smoke test container execution
+        run: |
+          docker run -d --name test_api -p 8000:8000 krs-dam-inflow-api:latest
+          sleep 5
+          curl -f http://localhost:8000/health || exit 1
+          docker stop test_api
+          docker rm test_api

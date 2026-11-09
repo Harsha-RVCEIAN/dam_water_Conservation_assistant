@@ -37,3 +37,9 @@ Thumbs.db
 *.md
 !README.md
 !readme.md
+# SQLite & Model Registry databases
+*.db
+mlflow.db
+*.sqlite
+*.sqlite3
+

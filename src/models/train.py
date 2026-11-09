@@ -31,8 +31,6 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-from src.data.generate_tracking_figure import generate_tracking_figure
-
 # Prevent Loky warning on Windows subprocess
 os.environ["LOKY_MAX_CPU_COUNT"] = str(os.cpu_count() or 4)
 
@@ -455,6 +453,7 @@ def train_and_evaluate(
 
         # Generate & log tracking figure + EDA figures to MLflow Artifacts
         try:
+            from src.data.generate_tracking_figure import generate_tracking_figure
             tracking_fig = generate_tracking_figure()
             if tracking_fig.exists():
                 mlflow.log_artifact(str(tracking_fig), artifact_path="figures")
