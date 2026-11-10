@@ -149,15 +149,17 @@ dam_mlops/
   - **Validation:** 2023-01-01 to 2024-12-31 (731 days)
   - **Held-Out Test:** 2025-01-01 to 2026-10-20 (658 days)
 
-### Test Set Performance
+### Test Set Performance (Authoritative Held-Out Test Split: 2025-01-01 to 2026-10-20, 658 days)
 
-| Model | MAE (cusecs) | RMSE (cusecs) | $R^2$ |
-|---|---|---|---|
-| **Persistence Baseline ($Inflow_t$)** | 2,278.40 | 6,685.56 | 0.4796 |
-| **7-Day Moving Average** | 2,996.67 | 7,361.00 | 0.3691 |
-| **Random Forest Regressor** | **2,347.07** | **5,929.95** | **0.5906** |
+| Model | MAE (cusecs) | RMSE (cusecs) | $R^2$ | WAPE |
+|---|---|---|---|---|
+| **Persistence Baseline ($Inflow_t$)** | 2,278.40 | 6,685.56 | 0.4796 | 44.58% |
+| **7-Day Moving Average** | 2,996.67 | 7,361.00 | 0.3691 | 58.63% |
+| **Tuned Random Forest Regressor** | **2,335.17** | **5,935.09** | **0.5899** | **45.69%** |
 
-The Random Forest model achieves an **11.30% reduction in RMSE** over the persistence baseline and improves the variance explained ($R^2$) from 0.48 to 0.59.
+The Tuned Random Forest model achieves an **11.23% reduction in RMSE** over the persistence baseline and improves the variance explained ($R^2$) from 0.48 to 0.5899.
+
+*(Note: An earlier exploratory 2024 test window [295 days: 2024-01-01 to 2024-10-21] produced MAE 2,347.07 cusecs, RMSE 5,929.95 cusecs. All production reports and metadata now reflect the authoritative 658-day held-out test split.)*
 
 ---
 

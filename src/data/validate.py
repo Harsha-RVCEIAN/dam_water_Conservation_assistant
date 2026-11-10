@@ -127,6 +127,9 @@ class ValidationReport:
     annual_reset_months: List[int] = field(default_factory=list)
     suspicious_records: List[Dict[str, Any]] = field(default_factory=list)
     data_age_days: Optional[int] = None
+    data_age_status: str = "STALE"
+    data_source_mode: str = "HISTORICAL_ARCHIVE"
+    telemetry_connection_status: str = "NOT_CONFIGURED"
     freshness_status: str = "HISTORICAL_ARCHIVE"
 
     def to_markdown(self) -> str:
@@ -265,10 +268,13 @@ def run_validation(data_path: Path = RAW_DATA_PATH) -> ValidationReport:
         missing_days_set = set(full_range) - set(valid_dates)
         missing_calendar_days = sorted([d.strftime("%Y-%m-%d") for d in missing_days_set])
 
-    # Dynamic data age
+    # Dynamic data age and explicit separation of age vs source mode
     today = pd.Timestamp.now().normalize()
     data_age_days = (today - valid_dates.iloc[-1]).days if len(valid_dates) > 0 else None
-    freshness_status = "CURRENT_OPERATIONAL" if (data_age_days is not None and data_age_days <= 1) else "HISTORICAL_ARCHIVE"
+    data_age_status = "FRESH" if (data_age_days is not None and data_age_days <= 1) else "STALE"
+    data_source_mode = "HISTORICAL_ARCHIVE"
+    telemetry_connection_status = "NOT_CONFIGURED"
+    freshness_status = "HISTORICAL_ARCHIVE"
 
     # Missing values
     missing_by_col = {col: int(df[col].isna().sum()) for col in df.columns}
@@ -363,6 +369,9 @@ def run_validation(data_path: Path = RAW_DATA_PATH) -> ValidationReport:
         annual_reset_months=reset_months,
         suspicious_records=suspicious,
         data_age_days=data_age_days,
+        data_age_status=data_age_status,
+        data_source_mode=data_source_mode,
+        telemetry_connection_status=telemetry_connection_status,
         freshness_status=freshness_status,
     )
     return report

@@ -100,8 +100,14 @@ class InflowForecaster:
         self,
         latest_observation_date: Union[str, pd.Timestamp],
         current_date: Optional[Union[str, pd.Timestamp]] = None,
+        data_source_mode: str = "HISTORICAL_ARCHIVE",
+        telemetry_connection_status: str = "NOT_CONFIGURED",
     ) -> Dict[str, Any]:
-        """Dynamically evaluate observation age and forecast validity."""
+        """Dynamically evaluate observation age, source mode, and forecast validity.
+
+        Separates data age (FRESH vs STALE) from data source mode (HISTORICAL_ARCHIVE vs LIVE_TELEMETRY)
+        and telemetry connection status to ensure historical archive rows are never mistaken for live telemetry.
+        """
         policy = load_freshness_policy().get("freshness", {})
         max_delay = policy.get("max_acceptable_delay_days", 1)
 
@@ -110,17 +116,24 @@ class InflowForecaster:
 
         data_age_days = int((t_curr - t_obs).days)
         is_stale = data_age_days > max_delay
-        status = "HISTORICAL_STALE" if is_stale else "CURRENT_OPERATIONAL"
+        data_age_status = "STALE" if is_stale else "FRESH"
+
+        # Maintain backward-compatible status while honoring source mode
+        status = "HISTORICAL_STALE" if is_stale else ("LIVE_OPERATIONAL" if data_source_mode == "LIVE_TELEMETRY" and telemetry_connection_status == "CONNECTED" else "CURRENT_OPERATIONAL")
 
         origin_date = str(t_obs.date())
         target_date = str((t_obs + pd.Timedelta(days=1)).date())
 
-        note = (
-            f"Observation date ({origin_date}) is {data_age_days} day(s) older than current date ({t_curr.date()}). "
-            "Forecast represents historical evaluation and must not be presented as a live operational prediction."
-            if is_stale
-            else "Observation meets freshness criteria for operational daily forecasting."
-        )
+        if is_stale:
+            note = (
+                f"Observation date ({origin_date}) is {data_age_days} day(s) older than current date ({t_curr.date()}). "
+                "Forecast represents historical evaluation and must not be presented as a live operational prediction."
+            )
+        else:
+            note = (
+                f"Observation date ({origin_date}) meets freshness age threshold ({data_age_days} <= {max_delay} days). "
+                f"Data source: {data_source_mode}; Live telemetry: {telemetry_connection_status} (advisory research prototype)."
+            )
 
         return {
             "forecast_origin_date": origin_date,
@@ -128,6 +141,9 @@ class InflowForecaster:
             "current_date": str(t_curr.date()),
             "data_age_days": data_age_days,
             "is_stale": is_stale,
+            "data_age_status": data_age_status,
+            "data_source_mode": data_source_mode,
+            "telemetry_connection_status": telemetry_connection_status,
             "freshness_status": status,
             "freshness_note": note,
         }

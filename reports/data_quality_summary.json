@@ -149,7 +149,7 @@
       "reason": "Exceeds KRS design gross capacity (49.452 TMC)"
     }
   ],
-  "data_age_days": 15,
+  "data_age_days": 19,
   "freshness_status": "HISTORICAL_ARCHIVE",
-  "generated_at": "2026-11-05T18:04:42.739779+00:00"
+  "generated_at": "2026-11-09T12:01:24.703588+00:00"
 }

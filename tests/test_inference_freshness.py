@@ -16,6 +16,9 @@ def test_forecast_freshness_evaluation():
     )
     assert res_stale["data_age_days"] == 15
     assert res_stale["is_stale"] is True
+    assert res_stale["data_age_status"] == "STALE"
+    assert res_stale["data_source_mode"] == "HISTORICAL_ARCHIVE"
+    assert res_stale["telemetry_connection_status"] == "NOT_CONFIGURED"
     assert res_stale["freshness_status"] == "HISTORICAL_STALE"
     assert res_stale["target_date"] == "2026-10-22"
     assert "historical evaluation" in res_stale["freshness_note"]
@@ -27,8 +30,25 @@ def test_forecast_freshness_evaluation():
     )
     assert res_fresh["data_age_days"] == 0
     assert res_fresh["is_stale"] is False
+    assert res_fresh["data_age_status"] == "FRESH"
+    assert res_fresh["data_source_mode"] == "HISTORICAL_ARCHIVE"
+    assert res_fresh["telemetry_connection_status"] == "NOT_CONFIGURED"
     assert res_fresh["freshness_status"] == "CURRENT_OPERATIONAL"
     assert res_fresh["target_date"] == "2026-11-06"
+
+
+def test_live_telemetry_requires_explicit_connector():
+    """Verify that historical archive data never claims to be live telemetry solely from recent timestamp."""
+    forecaster = InflowForecaster()
+    # Even if timestamp is today, source mode defaults to HISTORICAL_ARCHIVE
+    res = forecaster.evaluate_freshness(
+        latest_observation_date="2026-11-05",
+        current_date="2026-11-05",
+        data_source_mode="HISTORICAL_ARCHIVE",
+    )
+    assert res["data_source_mode"] == "HISTORICAL_ARCHIVE"
+    assert res["telemetry_connection_status"] == "NOT_CONFIGURED"
+    assert "Live telemetry: NOT_CONFIGURED" in res["freshness_note"]
 
 
 def test_inference_target_derived_from_origin():

@@ -1,7 +1,7 @@
 schema: '2.0'
 stages:
   merge_dam_rainfall:
-    cmd: .\.venv\Scripts\python.exe src\data\merge_dam_rainfall.py
+    cmd: python src/data/merge_dam_rainfall.py
     deps:
     - path: data\processed\krs_daily_rainfall.csv
       hash: md5
@@ -21,7 +21,7 @@ stages:
       md5: 717f13b371e1c9a60e32b74a1595bce9
       size: 8659283
   train_rainfall_enhanced:
-    cmd: .\.venv\Scripts\python.exe -m src.models.train_rainfall
+    cmd: python -m src.models.train_rainfall
     deps:
     - path: data\interim\krs_dam_rainfall_merged.csv
       hash: md5

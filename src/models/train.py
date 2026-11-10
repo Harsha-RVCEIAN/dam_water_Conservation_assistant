@@ -395,18 +395,36 @@ def train_and_evaluate(
             })
             mlflow.set_tags({"model_family": c_family, "stage": "candidate_benchmark"})
 
-    # 5C. Log Hyperparameter Tuning Sweep Runs
-    tuning_sweeps = [
-        ("rf_tuning_d8_l4_fsqrt", {"n_estimators": 100, "max_depth": 8, "min_samples_leaf": 4, "max_features": "sqrt"}, {"val_mae": 2119.51, "val_rmse": 7223.33, "val_r2": 0.6621}),
-        ("rf_tuning_d10_l4_fsqrt", {"n_estimators": 100, "max_depth": 10, "min_samples_leaf": 4, "max_features": "sqrt"}, {"val_mae": 2156.00, "val_rmse": 7322.01, "val_r2": 0.6528}),
-        ("rf_tuning_d12_l4_f07", {"n_estimators": 100, "max_depth": 12, "min_samples_leaf": 4, "max_features": 0.7}, {"val_mae": 2142.19, "val_rmse": 7407.03, "val_r2": 0.6447}),
-        ("rf_tuning_d10_l6_f07", {"n_estimators": 100, "max_depth": 10, "min_samples_leaf": 6, "max_features": 0.7}, {"val_mae": 2101.11, "val_rmse": 7426.82, "val_r2": 0.6428}),
+    # 5C. Execute & Log Hyperparameter Tuning Sweep Runs (Fitted on Train, Evaluated on Val)
+    tuning_candidate_params = [
+        ("rf_tuning_d8_l4_fsqrt", {"n_estimators": 100, "max_depth": 8, "min_samples_leaf": 4, "max_features": "sqrt", "random_state": 42, "n_jobs": -1}),
+        ("rf_tuning_d10_l4_fsqrt", {"n_estimators": 100, "max_depth": 10, "min_samples_leaf": 4, "max_features": "sqrt", "random_state": 42, "n_jobs": -1}),
+        ("rf_tuning_d12_l4_f07", {"n_estimators": 100, "max_depth": 12, "min_samples_leaf": 4, "max_features": 0.7, "random_state": 42, "n_jobs": -1}),
+        ("rf_tuning_d10_l6_f07", {"n_estimators": 100, "max_depth": 10, "min_samples_leaf": 6, "max_features": 0.7, "random_state": 42, "n_jobs": -1}),
     ]
-    for t_run_name, t_params, t_metrics in tuning_sweeps:
+    for t_run_name, t_params in tuning_candidate_params:
+        t_pipe = Pipeline([
+            ("imputer", SimpleImputer(strategy="median")),
+            ("regressor", RandomForestRegressor(**t_params)),
+        ])
+        t_pipe.fit(X_train, y_train)
+        t_pred = np.clip(t_pipe.predict(X_val), a_min=0.0, a_max=None)
+        t_metrics = evaluate_predictions(y_val, t_pred)
         with mlflow.start_run(run_name=t_run_name):
             mlflow.log_params(t_params)
-            mlflow.log_metrics(t_metrics)
-            mlflow.set_tags({"model_family": "random_forest", "stage": "hyperparameter_tuning"})
+            mlflow.log_metrics({
+                "val_mae": t_metrics["mae"],
+                "val_rmse": t_metrics["rmse"],
+                "val_r2": t_metrics["r2"],
+                "val_wape_pct": t_metrics["wape_pct"],
+            })
+            mlflow.set_tags({
+                "model_family": "random_forest",
+                "stage": "hyperparameter_tuning",
+                "training_split": "train_only",
+                "eval_split": "validation_only",
+                "target": TARGET_COLUMN,
+            })
 
     # 5D. Log Production Selected Model Winner with Full Artifacts & Figures
     with mlflow.start_run(run_name="tuned_random_forest_chronological") as run:

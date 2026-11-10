@@ -206,6 +206,13 @@
       }
     }
   },
+  "provenance": {
+    "artifact_path": "models/inflow_forecaster.joblib",
+    "artifact_sha256": "bad54cbd9331e0c5b38fba4d06a7d9dab5c1c056fd6c1246b125c8a9f67d1676",
+    "artifact_md5": "0a93971ffe6e20bf367244fc746508a1",
+    "git_commit": "72b43a87053ba5f5bdff259660b1d141453bec93",
+    "dvc_dataset_md5": "c872f414f484096a8a577dd2064b5b02"
+  },
   "mlflow": {
     "tracking_uri": "file:./mlruns",
     "experiment_name": "dam_inflow_forecasting",

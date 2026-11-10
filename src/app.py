@@ -163,7 +163,8 @@ def main() -> None:
         )
     else:
         st.success(
-            f"✅ **Data Freshness:** Latest observation is current (**{latest_date_str}**)."
+            f"✅ **Data Freshness:** Latest archive record is recent (**{latest_date_str}**, age $\\le$ 1 day). "
+            "Data source: Historical Archive &middot; Live telemetry: Not configured (research prototype)."
         )
 
     # Initialize model forecast safely before tab rendering
@@ -586,6 +587,7 @@ def main() -> None:
 
         st.markdown("---")
         st.markdown("#### 3. MLOps Workflow Status")
+        st.write("- **Airflow Orchestration:** DAG `krs_dam_inflow_mlops_pipeline` in `dags/krs_inflow_pipeline_dag.py` (orchestrates validation, preprocessing, water balance, and MLflow-tracked training).")
         st.write("- **DVC Stages:** `validate`, `validate_conversions`, `explore`, `preprocess`, `train` defined in `dvc.yaml`.")
         st.write("- **DVC Remote:** None configured (local cache only; no remote credentials provided).")
         st.write("- **MLflow:** Tracking URI `file:./mlruns`, Experiment `dam_inflow_forecasting`.")

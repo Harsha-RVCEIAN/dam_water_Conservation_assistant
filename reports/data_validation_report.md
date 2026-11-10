@@ -5,7 +5,7 @@
 - **Total columns:** 19
 - **Observed date range:** 1990-01-01 to 2026-10-21
 - **Strict chronological order:** Yes
-- **Data age from current execution:** 15 days (HISTORICAL_ARCHIVE)
+- **Data age from current execution:** 19 days (HISTORICAL_ARCHIVE)
 - **Duplicate timestamps:** 0
 - **Duplicate calendar days:** 0
 - **Date parse failures:** 0
