@@ -1,0 +1,49 @@
+# Version Control
+.git/
+.gitignore
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Python Cache & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Testing & Coverage Caches
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Environment Variables & Secrets
+.env
+*.env
+*.key
+*.pem
+
+# IDE & OS Metadata
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
+
+# MLflow Stores & Backups (Mounted dynamically at runtime via volume mount)
+mlruns/
+mlruns_backup*/
+mlruns_rainfall_enhanced/
+.trash/
+
+# Datasets (Inference service operates purely on HTTP request payloads)
+data/raw/
+data/interim/
+
+# Reports and temporary artifacts
+reports/figures/

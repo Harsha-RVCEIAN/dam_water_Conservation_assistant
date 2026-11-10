@@ -57,10 +57,11 @@ def get_model_md5(file_path: Path = MODEL_ARTIFACT_PATH) -> str:
     return hashlib.md5(file_path.read_bytes()).hexdigest()
 
 
-def get_registry_client(tracking_uri: str = MLFLOW_TRACKING_URI) -> MlflowClient:
+def get_registry_client(tracking_uri: Optional[str] = None) -> MlflowClient:
     """Return an MlflowClient configured for the given tracking URI."""
-    mlflow.set_tracking_uri(tracking_uri)
-    return MlflowClient(tracking_uri=tracking_uri, registry_uri=tracking_uri)
+    uri = tracking_uri or os.environ.get("MLFLOW_TRACKING_URI", MLFLOW_TRACKING_URI)
+    mlflow.set_tracking_uri(uri)
+    return MlflowClient(tracking_uri=uri, registry_uri=uri)
 
 
 def register_production_candidate(

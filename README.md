@@ -50,7 +50,61 @@ the original raw CSV from the configured DVC source first.
 
 # 12. Run FastAPI serving test suite
 .\.venv\Scripts\python.exe -m pytest tests/test_api_schemas.py tests/test_api.py -v
+
+# 13. Build the Docker image (Phase 2 Step 4)
+docker build -t krs-dam-api:step4 .
+
+# 14. Run the containerised inference service (mount mlruns for MLflow registry access)
+$mlruns = (Resolve-Path .\mlruns).Path
+docker run -d --name krs-dam-api-container -p 8000:8000 `
+    -e MLFLOW_TRACKING_URI=file:/app/mlruns `
+    -v "${mlruns}:/app/mlruns" `
+    krs-dam-api:step4
+
+# 15. Confirm model loaded (look for 'KRS_Dam_Inflow_Forecaster (v1) loaded successfully')
+docker logs krs-dam-api-container
+
+# 16. Run endpoint health checks
+Invoke-RestMethod -Uri http://127.0.0.1:8000/health -Method GET
+Invoke-RestMethod -Uri http://127.0.0.1:8000/ready -Method GET
+Invoke-RestMethod -Uri http://127.0.0.1:8000/model-info -Method GET
+
+# 17. Stop and remove container when done
+docker stop krs-dam-api-container; docker rm krs-dam-api-container
 ```
+
+### Docker Containerisation (Phase 2 Step 4)
+
+The FastAPI service is fully containerised in `Dockerfile` using `python:3.11-slim`.
+The image is tagged `krs-dam-api:step4` and exposes port 8000.
+
+**Prerequisites:** Docker Engine ≥ 20.x running (Docker Desktop on Windows/WSL2).
+
+**Volume mount is required** — the local `mlruns/` directory must be mounted into the
+container so the MLflow FileStore and registered model artifacts are accessible:
+
+```powershell
+# Full verified run command
+$mlruns = (Resolve-Path .\mlruns).Path
+docker run -d --name krs-dam-api-container -p 8000:8000 `
+    -e MLFLOW_TRACKING_URI=file:/app/mlruns `
+    -v "${mlruns}:/app/mlruns" `
+    krs-dam-api:step4
+```
+
+**Expected startup log:**
+```
+INFO:krs_dam_api:Registered model 'KRS_Dam_Inflow_Forecaster' (v1) loaded successfully into application state.
+INFO:     Application startup complete.
+```
+
+**Container healthcheck:** Built-in Docker HEALTHCHECK polls `GET /health` every 30 s via `python -c urllib.request`. Container status shows `(healthy)` within ~40 s of start.
+
+**Troubleshooting:**
+- If startup shows `[Errno 30] Read-only file system` — mount the volume without `:ro` (write access is needed for MLflow's internal `registered_model_meta` cache file).
+- If `mlruns/` path is wrong, verify with `(Resolve-Path .\mlruns).Path` and use that exact absolute path in `-v`.
+- To diagnose startup failures: `docker logs krs-dam-api-container` — look for the model loaded confirmation line or any error message.
+- **Windows-path compatibility:** MLflow records artifact URIs using the Windows host path (e.g. `file:///C:/Users/...`). Inside a Linux container the loader automatically creates a compatibility symlink so these paths resolve to the mounted `/app/mlruns`. If this symlink step fails, check the container logs for `Could not create artifact compatibility symlink`.
 
 ### FastAPI Model Serving Operations
 
