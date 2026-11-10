@@ -18,6 +18,7 @@ htmlcov/
 
 # MLflow tracking local artifacts and database
 mlruns/
+mlruns_backup*/
 mlruns_rainfall_enhanced/
 .trash/
 

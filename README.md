@@ -36,8 +36,35 @@ the original raw CSV from the configured DVC source first.
 # 7. Launch interactive Streamlit dashboard
 .\.venv\Scripts\python.exe -m streamlit run src/app.py
 
-# 8. View MLflow experiment runs (optional)
+# 8. View MLflow experiment runs and Model Registry
 .\.venv\Scripts\python.exe -m mlflow ui
+
+# 9. Register production candidate in MLflow Model Registry (Phase 2 Step 2)
+.\.venv\Scripts\python.exe -m src.models.model_registry
+
+# 10. Run Model Registry tests
+.\.venv\Scripts\python.exe -m pytest tests/test_model_registry.py -v
+```
+
+### MLflow Model Registry Operations
+
+The project manages model versioning through the native MLflow Model Registry under `KRS_Dam_Inflow_Forecaster`:
+
+```powershell
+# Start MLflow UI to view tracking runs & Model Registry
+.\.venv\Scripts\python.exe -m mlflow ui
+
+# Inspect registered models and active versions
+.\.venv\Scripts\python.exe -c "import mlflow; client = mlflow.MlflowClient(); [print(f'Model: {m.name}, Versions: {[v.version for v in m.latest_versions]}') for m in client.search_registered_models()]"
+
+# Load registered model version 1 directly in Python
+.\.venv\Scripts\python.exe -c "import mlflow.sklearn; m = mlflow.sklearn.load_model('models:/KRS_Dam_Inflow_Forecaster/1'); print(m)"
+
+# Load registered model using candidate alias (@candidate)
+.\.venv\Scripts\python.exe -c "import mlflow.sklearn; m = mlflow.sklearn.load_model('models:/KRS_Dam_Inflow_Forecaster@candidate'); print(m)"
+
+# Back up tracking and registry store (non-destructive)
+Copy-Item -Path mlruns -Destination mlruns_backup -Recurse
 ```
 
 ### Rainfall experiment tracking
@@ -172,8 +199,15 @@ The Tuned Random Forest model achieves an **11.23% reduction in RMSE** over the 
 2. **Experiment Tracking (MLflow):**
    - Local tracking store at `mlruns/`.
    - Logs hyperparameters, chronological split bounds, baseline metrics, test metrics, and pipeline artifacts.
-3. **Automated Testing (pytest):**
-   - 17 unit and smoke tests covering header normalization, date parsing, unit conversions, water balance arithmetic, chronological ordering, leakage prevention, and app imports.
+3. **Model Quality Evaluation & Acceptance (Phase 2 Step 1):**
+   - Evaluates performance across low/normal/high flow regimes, seasons, and 80% empirical prediction intervals.
+   - Acceptance status: `CONDITIONAL` (RMSE improvement +11.23% vs persistence; MAE slightly higher in dry-season baseflow).
+4. **Model Registry (Phase 2 Step 2):**
+   - Centralized model management under registered name `KRS_Dam_Inflow_Forecaster` (Version 1, `@candidate`).
+   - Lineage preserved from original training run `157ee4e92e284c82a63f385d6c4c9469` without retraining.
+   - Verified 100% prediction equivalence against disk artifact (`max_diff = 0.0` cfs).
+5. **Automated Testing (pytest):**
+   - 200+ unit, integration, and regression tests covering preprocessing, feature engineering, water balance mass accounting, model quality, and registry contracts.
 
 ---
 

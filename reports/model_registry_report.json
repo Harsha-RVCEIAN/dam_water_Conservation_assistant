@@ -1,0 +1,105 @@
+{
+  "report_timestamp": "2026-11-10T11:01:36.103024+00:00",
+  "phase": "Phase 2 \u2013 Step 2: MLflow Model Registry",
+  "project": "KRS Dam Water Conservation Assistant",
+  "environment": {
+    "python_version": "3.11.9",
+    "mlflow_version": "2.22.5",
+    "tracking_uri": "file:./mlruns",
+    "registry_uri": "file:./mlruns",
+    "backend_store_type": "FileStore (mlruns/)",
+    "database_migration_status": "UNNECESSARY_AND_PRESERVED",
+    "database_migration_rationale": "MLflow 2.22.5 natively supports Model Registry on local FileStore (file:./mlruns). Local tracking history with 20+ runs, exact run IDs, and artifact paths are 100% preserved. Installed SQLAlchemy 2.1.6 diverges from requirements.txt (<2.1.0) and lacks FallbackAsyncAdaptedQueuePool; upgrading/downgrading packages is strictly prohibited. FileStore avoids third-party migration risks."
+  },
+  "model_artifact": {
+    "path": "models\\inflow_forecaster.joblib",
+    "sha256": "bad54cbd9331e0c5b38fba4d06a7d9dab5c1c056fd6c1246b125c8a9f67d1676",
+    "md5": "0a93971ffe6e20bf367244fc746508a1",
+    "sha256_match_metadata": true,
+    "preserved_without_retraining": true
+  },
+  "registered_model": {
+    "name": "KRS_Dam_Inflow_Forecaster",
+    "version": 1,
+    "current_stage": "None",
+    "aliases": [
+      "candidate"
+    ],
+    "status": "READY",
+    "source_run_id": "157ee4e92e284c82a63f385d6c4c9469",
+    "source_uri": "runs:/157ee4e92e284c82a63f385d6c4c9469/model",
+    "model_flavor": "mlflow.sklearn",
+    "quality_status": "CONDITIONAL",
+    "deployment_approved": "false",
+    "tags": {
+      "artifact_sha256": "bad54cbd9331e0c5b38fba4d06a7d9dab5c1c056fd6c1246b125c8a9f67d1676",
+      "deployment_approved": "false",
+      "evaluation_period": "2025-01-01_to_2026-10-20",
+      "intended_use": "Historical inflow forecasting",
+      "interval_coverage": "77.05",
+      "mae": "2335.17",
+      "model_type": "Tuned_Random_Forest",
+      "prediction_target": "target_inflow_next_day_cusecs",
+      "project": "KRS_Dam_Water_Conservation_Assistant",
+      "quality_evaluation_run_id": "e862daaa8b9642ceb53259959dbfaf14",
+      "quality_status": "CONDITIONAL",
+      "r2": "0.5899",
+      "registration_stage": "candidate_registry",
+      "rmse": "5935.09",
+      "training_run_id": "157ee4e92e284c82a63f385d6c4c9469",
+      "wape": "45.69"
+    },
+    "description": "Production candidate inflow forecasting model for KRS Dam (Cauvery Basin). Tuned RandomForestRegressor with 19 dam lag/rolling/calendar features. Acceptance status is CONDITIONAL per Phase 2 Step 1 quality evaluation (RMSE: 5935.09 cfs, MAE: 2335.17 cfs, R\u00b2: 0.5899, 80% interval coverage: 77.05%). NOT approved for automated production dispatch without operational review."
+  },
+  "lineage": {
+    "training_run_id": "157ee4e92e284c82a63f385d6c4c9469",
+    "training_run_name": "tuned_random_forest_chronological",
+    "quality_evaluation_run_id": "e862daaa8b9642ceb53259959dbfaf14",
+    "quality_evaluation_status": "CONDITIONAL",
+    "registry_version": 1,
+    "lineage_traceable": true,
+    "packaging_run_created": false,
+    "packaging_rationale": "Direct registration from original verified training run artifact (runs:/157ee4e92e284c82a63f385d6c4c9469/model)."
+  },
+  "quality_metrics_summary": {
+    "mae_cfs": 2335.17,
+    "rmse_cfs": 5935.09,
+    "r2_score": 0.5899,
+    "wape_pct": 45.69,
+    "interval_coverage_pct": 77.05,
+    "rmse_improvement_vs_persistence_pct": 11.23,
+    "acceptance_status": "CONDITIONAL",
+    "operational_conditions": [
+      "Low-flow and flat-baseflow regimes: Persistence remains competitive; use ensemble blending or baseline cross-check.",
+      "High-flow monsoon surge peaks: Prediction intervals exhibit conservative bounds; manual reservoir flood gating overrides required.",
+      "Historical archive mode: Real-time telemetry is not connected; operational deployment requires live CWC/telemetry feed integration."
+    ]
+  },
+  "prediction_equivalence": {
+    "is_equivalent": true,
+    "max_absolute_difference": 1.4551915228366852e-11,
+    "mean_absolute_difference": 5.025632055057001e-13,
+    "sample_count": 658,
+    "tolerance": 1e-05,
+    "all_non_negative": true,
+    "all_finite": true,
+    "has_expected_pipeline_steps": true,
+    "feature_count_expected": 19,
+    "reorder_invariant": true,
+    "sample_predictions_head": [
+      2148.62,
+      1587.76,
+      1812.28,
+      1540.16,
+      1588.99
+    ],
+    "sample_predictions_tail": [
+      1253.51,
+      5229.36,
+      4492.27,
+      5732.12,
+      6116.15
+    ]
+  },
+  "completion_status": "COMPLETED"
+}
