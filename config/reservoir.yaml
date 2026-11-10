@@ -1,0 +1,134 @@
+# Krishna Raja Sagara (KRS) Dam & Context Reservoirs Configuration
+# Note: Every constant specifies its origin and whether it is officially verified.
+
+reservoir:
+  id: "krs"
+  name: "Krishna Raja Sagara (KRS)"
+  basin: "Cauvery"
+  sub_basin: "Upper Cauvery"
+  river: "Cauvery"
+  location:
+    state: "Karnataka"
+    district: "Mandya"
+    taluk: "Srirangapatna"
+    latitude: 12.4244
+    longitude: 76.5722
+
+specifications:
+  full_reservoir_level_ft:
+    value: 124.80
+    unit: "ft"
+    primary: true
+    verified: true
+    source: "Karnataka State Natural Disaster Monitoring Centre (KSNDMC) & Water Resources Dept"
+    description: "Full Reservoir Level (FRL) above gauge datum."
+  
+  full_reservoir_level_m:
+    value: 38.03904  # 124.80 * 0.3048
+    unit: "m"
+    primary: false
+    verified: true
+    source: "Direct physical unit conversion (ft * 0.3048)"
+    description: "Full Reservoir Level equivalent in metres."
+
+  gross_capacity_tmc:
+    value: 49.452
+    unit: "TMC"
+    verified: true
+    source: "Central Water Commission (CWC) National Register of Large Dams & Karnataka WRD"
+    description: "Design Gross Storage Capacity."
+
+  design_live_capacity_tmc:
+    value: 45.051
+    unit: "TMC"
+    verified: true
+    source: "Project Design Specification"
+    description: "Design Live Storage Capacity above sill level."
+
+  surveyed_live_capacity_2009_tmc:
+    value: 42.99
+    unit: "TMC"
+    verified: true
+    source: "Karnataka Hydrographic Survey 2009"
+    description: "Post-sedimentation surveyed live storage reference."
+
+  dead_storage_tmc:
+    value: 4.401
+    unit: "TMC"
+    verified: false  # Explicitly flagged unverified per spec
+    editable_by_admin: true
+    source: "Derived candidate estimate (Gross 49.452 - Design Live 45.051). Unverified by certified bathymetry."
+    description: "Unverified dead storage volume below sill level."
+
+  sill_level_ft:
+    value: 60.00
+    unit: "ft"
+    verified: false  # Explicitly flagged unverified per spec
+    editable_by_admin: true
+    source: "Historical canal sill datum reference. Unverified."
+    description: "Minimum draw-down / canal sill level."
+
+context_reservoirs:
+  harangi:
+    name: "Harangi"
+    role: "upstream_tributary"
+    feeds_krs: true
+    gross_capacity_tmc: 8.50
+    verified: true
+    source: "Karnataka WRD & CWC"
+    location:
+      latitude: 12.4833
+      longitude: 75.9000
+
+  hemavathi:
+    name: "Hemavathi"
+    role: "upstream_tributary"
+    feeds_krs: true
+    gross_capacity_tmc: 37.10
+    verified: true
+    source: "Karnataka WRD & CWC"
+    location:
+      latitude: 12.8080
+      longitude: 76.0500
+
+  kabini:
+    name: "Kabini"
+    role: "comparison_tributary"
+    feeds_krs: false  # Joins Cauvery downstream of KRS at Tirumakudalu Narasipura
+    gross_capacity_tmc: 19.52
+    verified: true
+    source: "Karnataka WRD & CWC"
+    location:
+      latitude: 11.9733
+      longitude: 76.3522
+
+status_bands:
+  watch_high:
+    level_ft: 120.0
+    percent_gross: 90.0
+    severity: "warning"
+    label: "Watch-High"
+  alert_high:
+    level_ft: 123.0
+    percent_gross: 97.0
+    severity: "alert"
+    label: "Alert-High"
+  watch_low:
+    percent_gross: 30.0
+    severity: "warning"
+    label: "Watch-Low"
+  critical_low:
+    storage_tmc: 5.0
+    severity: "critical"
+    label: "Critical-Low"
+
+urban_demands:
+  bengaluru_monthly_tmc:
+    value: 1.50
+    source: "Bangalore Water Supply and Sewerage Board (BWSSB) Cauvery Stages I-V allocations"
+    verified: true
+  mysuru_monthly_tmc:
+    value: 0.30
+    source: "Mysuru City Corporation (MCC) water supply estimates"
+    verified: true
+
