@@ -10,7 +10,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, Response, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -69,6 +69,33 @@ def create_app() -> FastAPI:
     application.include_router(health_router)
     application.include_router(model_info_router)
     application.include_router(prediction_router)
+
+    # Root & Navigation Endpoints
+    @application.get("/", tags=["Root"])
+    async def root():
+        """Root welcome endpoint providing service information and API navigation links."""
+        return {
+            "service": "KRS Dam Inflow Forecasting API",
+            "version": "1.0.0",
+            "status": "online",
+            "documentation": {
+                "swagger_ui": "/docs",
+                "redoc": "/redoc",
+                "openapi_spec": "/openapi.json",
+            },
+            "endpoints": {
+                "health": "GET /health",
+                "readiness": "GET /ready",
+                "model_info": "GET /model-info",
+                "predict": "POST /predict",
+            },
+            "message": "Welcome to the KRS Dam Inflow Forecasting API. Navigate to /docs for interactive testing.",
+        }
+
+    @application.get("/favicon.ico", include_in_schema=False)
+    async def favicon():
+        """Handle browser favicon request cleanly with 204 No Content."""
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     # Custom Exception Handlers
     @application.exception_handler(RequestValidationError)

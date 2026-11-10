@@ -169,6 +169,25 @@ def valid_test_rows() -> List[dict]:
 # -----------------------------------------------------------------------------
 
 @pytest.mark.anyio
+async def test_root_endpoint_returns_navigation_links(client):
+    """Verify that GET / responds 200 with navigation links to docs and endpoints."""
+    resp = await client.get("/")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["service"] == "KRS Dam Inflow Forecasting API"
+    assert data["status"] == "online"
+    assert "/docs" in data["documentation"]["swagger_ui"]
+    assert "GET /health" in data["endpoints"]["health"]
+    assert "POST /predict" in data["endpoints"]["predict"]
+
+
+@pytest.mark.anyio
+async def test_favicon_endpoint_returns_204(client):
+    """Verify that GET /favicon.ico responds 204 No Content for browser requests."""
+    resp = await client.get("/favicon.ico")
+    assert resp.status_code == 204
+
+@pytest.mark.anyio
 async def test_health_endpoint_returns_200(client):
     """Verify that /health responds 200 with service metadata."""
     resp = await client.get("/health")
