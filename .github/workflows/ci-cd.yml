@@ -1,0 +1,40 @@
+name: KRS Dam CI
+
+on:
+  push:
+    branches: [harsha, main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile Python files
+        run: python -m compileall -q src
+
+      - name: Run focused tests
+        run: |
+          pytest -q \
+            tests/test_api_schemas.py \
+            tests/test_api.py \
+            tests/test_model_registry.py \
+            tests/test_forecasting.py \
+            tests/test_model_artifact_provenance.py
+
+      - name: Build Docker image
+        run: docker build -t krs-dam-api:ci .

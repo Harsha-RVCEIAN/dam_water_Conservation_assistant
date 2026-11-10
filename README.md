@@ -305,6 +305,11 @@ The Tuned Random Forest model achieves an **11.23% reduction in RMSE** over the 
    - Mathematical prediction equivalence verified against direct MLflow predictions (`max_diff <= 1e-5` cusecs).
 6. **Automated Testing (pytest):**
    - 220+ unit, integration, schema, and API lifecycle tests covering preprocessing, feature engineering, water balance mass accounting, model quality, model registry, and FastAPI serving contracts.
+7. **Containerization & CI Pipeline (Phase 2 Steps 4 & 5):**
+   - **Docker Container:** Lightweight image (`python:3.11-slim`) exposing port 8000 with liveness health check, serving registered version 1 with physical non-negative flow constraints.
+   - **CI Workflow (`.github/workflows/ci-cd.yml`):** Runs on push to `harsha` / `main` and pull requests to `main`. Installs dependencies on Python 3.11, validates Python bytecode compilation (`compileall src`), executes the authoritative 59-test serving & registry test suite, and builds the Docker image (`krs-dam-api:ci`).
+   - **Headless Store Provisioning:** Integrates `tests/conftest.py` with `src.models.provision_ci_registry` to dynamically populate the MLflow FileStore from tracked Git artifacts (`models/inflow_forecaster.joblib` and `models/model_metadata.json`), ensuring clean, reproducible CI runs without committing local `mlruns/` directories or exposing host secrets.
+   - **Deployment Boundary:** Passing CI builds the candidate container image but explicitly halts before release/deployment, keeping the advisory model's `CONDITIONAL` status and `deployment_approved=false` policy intact.
 
 ---
 
