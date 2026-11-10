@@ -1,0 +1,152 @@
+{
+  "service_name": "krs-dam-inflow-serving",
+  "version": "1.0.0",
+  "phase": "Phase 2 – Step 3: FastAPI Model Serving",
+  "project": "KRS Dam Water Conservation Assistant",
+  "report_timestamp": "2026-11-10T11:55:00+00:00",
+  "status": "COMPLETED",
+  "environment": {
+    "python_version": "3.11.9",
+    "fastapi_version": "0.158.0",
+    "pydantic_version": "2.14.1",
+    "starlette_version": "1.9.0",
+    "uvicorn_version": "0.54.0",
+    "mlflow_version": "2.22.5"
+  },
+  "model_provenance": {
+    "registered_model_name": "KRS_Dam_Inflow_Forecaster",
+    "registered_version": 1,
+    "alias": "candidate",
+    "stage": "None (candidate)",
+    "mlflow_model_uri": "models:/KRS_Dam_Inflow_Forecaster/1",
+    "source_training_run_id": "157ee4e92e284c82a63f385d6c4c9469",
+    "source_training_run_name": "tuned_random_forest_chronological",
+    "quality_evaluation_run_id": "e862daaa8b9642ceb53259959dbfaf14",
+    "quality_status": "CONDITIONAL",
+    "deployment_approved": false,
+    "target_variable": "target_inflow_next_day_cusecs",
+    "target_unit": "cusecs",
+    "pipeline_steps": [
+      "SimpleImputer(median)",
+      "RandomForestRegressor"
+    ],
+    "artifact_sha256": "bad54cbd9331e0c5b38fba4d06a7d9dab5c1c056fd6c1246b125c8a9f67d1676",
+    "artifact_md5": "0a93971ffe6e20bf367244fc746508a1"
+  },
+  "verified_feature_schema": {
+    "feature_count": 19,
+    "feature_columns": [
+      "inflow_lag_1",
+      "inflow_lag_2",
+      "inflow_lag_3",
+      "inflow_lag_7",
+      "inflow_lag_14",
+      "inflow_roll_mean_7",
+      "inflow_roll_std_7",
+      "inflow_roll_max_7",
+      "inflow_roll_mean_14",
+      "inflow_roll_mean_30",
+      "storage_lag_1",
+      "storage_lag_7",
+      "outflow_lag_1",
+      "outflow_lag_7",
+      "month",
+      "day_of_year",
+      "is_monsoon",
+      "sin_day_of_year",
+      "cos_day_of_year"
+    ],
+    "validation_rules": {
+      "extra_fields": "forbid (HTTP 422)",
+      "null_values": "reject (HTTP 422)",
+      "nan_values": "reject (HTTP 422)",
+      "infinite_values": "reject (HTTP 422)",
+      "cyclical_encoding": "auto_derived_from_day_of_year_if_omitted"
+    }
+  },
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/health",
+      "description": "Liveness probe reporting API process status.",
+      "response_model": "HealthResponse",
+      "status_code": 200
+    },
+    {
+      "method": "GET",
+      "path": "/ready",
+      "description": "Readiness probe reporting whether registered model is loaded.",
+      "response_model": "ReadyResponse",
+      "status_codes": [200, 503]
+    },
+    {
+      "method": "GET",
+      "path": "/model-info",
+      "description": "Returns model provenance, feature schema, and quality status without secrets.",
+      "response_model": "ModelInfoResponse",
+      "status_code": 200
+    },
+    {
+      "method": "POST",
+      "path": "/predict",
+      "description": "Computes single-row next-day inflow forecast with non-negative clipping.",
+      "request_model": "InflowPredictionRequest",
+      "response_model": "InflowPredictionResponse",
+      "status_codes": [200, 422, 503, 500]
+    },
+    {
+      "method": "GET",
+      "path": "/docs",
+      "description": "Interactive Swagger UI documentation.",
+      "status_code": 200
+    },
+    {
+      "method": "GET",
+      "path": "/openapi.json",
+      "description": "OpenAPI JSON schema definition.",
+      "status_code": 200
+    }
+  ],
+  "testing_evidence": {
+    "api_unit_tests": {
+      "command": "pytest tests/test_api_schemas.py tests/test_api.py -v",
+      "passed": 28,
+      "failed": 0
+    },
+    "prediction_equivalence": {
+      "status": "PASS",
+      "max_absolute_difference_cusecs": 0.0,
+      "tolerance": 1e-5,
+      "comparison_target": "Direct mlflow.sklearn.load_model('models:/KRS_Dam_Inflow_Forecaster/1')"
+    },
+    "full_suite": {
+      "command": "pytest --tb=short -q",
+      "total_tests": 248,
+      "passed": 226,
+      "failed": 22,
+      "failure_rationale": "All 22 failures are pre-existing blocked rainfall tests awaiting external IMD/CWC rainfall source data."
+    }
+  },
+  "files_created_or_modified": [
+    "src/api/__init__.py",
+    "src/api/main.py",
+    "src/api/schemas.py",
+    "src/api/model_loader.py",
+    "src/api/routes/__init__.py",
+    "src/api/routes/health.py",
+    "src/api/routes/model_info.py",
+    "src/api/routes/prediction.py",
+    "tests/test_api.py",
+    "tests/test_api_schemas.py",
+    "reports/fastapi_service_report.json",
+    "reports/fastapi_service_report.md",
+    "README.md"
+  ],
+  "operational_limitations": [
+    "Advisory forecast only: NOT approved for autonomous spillway gate dispatch.",
+    "Data source: Built and evaluated on historical observations up to Oct 2026; live telemetry stream connector pending.",
+    "Quality status remains strictly CONDITIONAL (deployment_approved=false).",
+    "Single-row inference contract only."
+  ]
+}
+

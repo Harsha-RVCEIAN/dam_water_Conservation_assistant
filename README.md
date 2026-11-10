@@ -44,6 +44,44 @@ the original raw CSV from the configured DVC source first.
 
 # 10. Run Model Registry tests
 .\.venv\Scripts\python.exe -m pytest tests/test_model_registry.py -v
+
+# 11. Launch FastAPI Model Serving service (Phase 2 Step 3)
+.\.venv\Scripts\python.exe -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000
+
+# 12. Run FastAPI serving test suite
+.\.venv\Scripts\python.exe -m pytest tests/test_api_schemas.py tests/test_api.py -v
+```
+
+### FastAPI Model Serving Operations
+
+The project exposes the registered model (`KRS_Dam_Inflow_Forecaster`, Version 1) over HTTP via FastAPI:
+
+```powershell
+# 1. Start the HTTP inference service
+.\.venv\Scripts\python.exe -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000
+
+# 2. Check service liveness
+Invoke-RestMethod -Uri http://127.0.0.1:8000/health -Method GET
+
+# 3. Check model readiness
+Invoke-RestMethod -Uri http://127.0.0.1:8000/ready -Method GET
+
+# 4. Inspect model metadata & quality status
+Invoke-RestMethod -Uri http://127.0.0.1:8000/model-info -Method GET
+
+# 5. Send an inflow prediction request
+$body = @{
+    inflow_lag_1 = 1500.0; inflow_lag_2 = 1450.0; inflow_lag_3 = 1400.0
+    inflow_lag_7 = 1300.0; inflow_lag_14 = 1200.0; inflow_roll_mean_7 = 1420.0
+    inflow_roll_std_7 = 75.0; inflow_roll_max_7 = 1550.0; inflow_roll_mean_14 = 1350.0
+    inflow_roll_mean_30 = 1300.0; storage_lag_1 = 35.5; storage_lag_7 = 36.0
+    outflow_lag_1 = 2200.0; outflow_lag_7 = 2150.0; month = 7; day_of_year = 195
+    is_monsoon = 1
+} | ConvertTo-Json
+Invoke-RestMethod -Uri http://127.0.0.1:8000/predict -Method POST -Body $body -ContentType "application/json"
+
+# 6. View interactive Swagger UI documentation
+# Open http://127.0.0.1:8000/docs in your browser
 ```
 
 ### MLflow Model Registry Operations
@@ -206,8 +244,13 @@ The Tuned Random Forest model achieves an **11.23% reduction in RMSE** over the 
    - Centralized model management under registered name `KRS_Dam_Inflow_Forecaster` (Version 1, `@candidate`).
    - Lineage preserved from original training run `157ee4e92e284c82a63f385d6c4c9469` without retraining.
    - Verified 100% prediction equivalence against disk artifact (`max_diff = 0.0` cfs).
-5. **Automated Testing (pytest):**
-   - 200+ unit, integration, and regression tests covering preprocessing, feature engineering, water balance mass accounting, model quality, and registry contracts.
+5. **FastAPI Model Serving (Phase 2 Step 3):**
+   - High-performance HTTP inference service loading registered Version 1 at startup via lifespan context manager.
+   - Strict 19-feature Pydantic schema validation (`extra='forbid'`, rejecting NaN/inf).
+   - Probes for process liveness (`/health`) and model readiness (`/ready`), plus metadata (`/model-info`) and forecasting (`/predict`).
+   - Mathematical prediction equivalence verified against direct MLflow predictions (`max_diff <= 1e-5` cusecs).
+6. **Automated Testing (pytest):**
+   - 220+ unit, integration, schema, and API lifecycle tests covering preprocessing, feature engineering, water balance mass accounting, model quality, model registry, and FastAPI serving contracts.
 
 ---
 
