@@ -396,11 +396,27 @@ def train_and_evaluate(
             mlflow.set_tags({"model_family": c_family, "stage": "candidate_benchmark"})
 
     # 5C. Execute & Log Hyperparameter Tuning Sweep Runs (Fitted on Train, Evaluated on Val)
-    tuning_candidate_params = [
-        ("rf_tuning_d8_l4_fsqrt", {"n_estimators": 100, "max_depth": 8, "min_samples_leaf": 4, "max_features": "sqrt", "random_state": 42, "n_jobs": -1}),
-        ("rf_tuning_d10_l4_fsqrt", {"n_estimators": 100, "max_depth": 10, "min_samples_leaf": 4, "max_features": "sqrt", "random_state": 42, "n_jobs": -1}),
-        ("rf_tuning_d12_l4_f07", {"n_estimators": 100, "max_depth": 12, "min_samples_leaf": 4, "max_features": 0.7, "random_state": 42, "n_jobs": -1}),
-        ("rf_tuning_d10_l6_f07", {"n_estimators": 100, "max_depth": 10, "min_samples_leaf": 6, "max_features": 0.7, "random_state": 42, "n_jobs": -1}),
+    tuning_candidate_params: list[tuple[str, dict]] = [
+        (
+            "rf_tuning_d8_l4_fsqrt",
+            {"n_estimators": 100, "max_depth": 8, "min_samples_leaf": 4,
+             "max_features": "sqrt", "random_state": 42, "n_jobs": -1},
+        ),
+        (
+            "rf_tuning_d10_l4_fsqrt",
+            {"n_estimators": 100, "max_depth": 10, "min_samples_leaf": 4,
+             "max_features": "sqrt", "random_state": 42, "n_jobs": -1},
+        ),
+        (
+            "rf_tuning_d12_l4_f07",
+            {"n_estimators": 100, "max_depth": 12, "min_samples_leaf": 4,
+             "max_features": 0.7, "random_state": 42, "n_jobs": -1},
+        ),
+        (
+            "rf_tuning_d10_l6_f07",
+            {"n_estimators": 100, "max_depth": 10, "min_samples_leaf": 6,
+             "max_features": 0.7, "random_state": 42, "n_jobs": -1},
+        ),
     ]
     for t_run_name, t_params in tuning_candidate_params:
         t_pipe = Pipeline([

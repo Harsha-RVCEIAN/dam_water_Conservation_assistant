@@ -1,3 +1,21 @@
+"""Tests for the rainfall enhanced model inference pipeline.
+
+Module tested: ``src.models.rainfall_inference``
+
+Key scenarios:
+- ``MODEL_ARTIFACT_FILES`` lists all required ``.joblib`` artefact paths.
+- ``eligible_prediction_issue_dates`` returns only dates for which all 8
+  rainfall features are non-null and within the valid inference window.
+- ``feature_values_for_row`` assembles the correct feature vector for a
+  given issue date and raises ``RainfallInferenceError`` on bad input.
+- End-to-end inference produces predictions within a plausible physical range.
+
+BLOCKED: These tests require the fitted artefacts under
+``models/rainfall_enhanced/*.joblib``, which are not committed to the
+repository (pending IMD/CWC rainfall source data).  All tests in this file
+are therefore expected to be skipped or fail until those artefacts are
+provided.
+"""
 import numpy as np
 import pandas as pd
 import pytest

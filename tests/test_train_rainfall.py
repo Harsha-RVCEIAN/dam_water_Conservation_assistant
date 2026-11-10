@@ -1,3 +1,19 @@
+"""Tests for the rainfall enhanced model training module contracts.
+
+Module tested: ``src.models.train_rainfall``
+
+Key scenarios:
+- ``FEATURE_COLUMNS`` contains exactly 19 dam-based features and
+  ``RAINFALL_FEATURE_COLUMNS`` adds 8 rainfall features (27 combined).
+- The target column is excluded from both feature sets.
+- Chronological train/validation/test split boundaries are respected; no
+  future data can contaminate earlier splits.
+- The fitted pipeline (imputer → RandomForest) serialises and deserialises
+  correctly with ``joblib``.
+
+Coverage scope: module-level constants, feature schema, and split contracts;
+does not trigger a live training run against the full dataset.
+"""
 import numpy as np
 import pandas as pd
 import pytest

@@ -1,3 +1,15 @@
+"""Tests for EDA (Exploratory Data Analysis) fallback behaviour.
+
+Module tested: ``src.data.explore``
+
+Key scenarios:
+- When the raw input CSV is absent, the EDA module falls back to the
+  preprocessed / cached dataset instead of raising an unhandled error.
+- Generated figures are either produced from the fallback data or handled
+  gracefully when figure artifacts are unavailable.
+
+Coverage scope: fallback path only; does not test the full EDA chart library.
+"""
 import pandas as pd
 
 from src.data import explore

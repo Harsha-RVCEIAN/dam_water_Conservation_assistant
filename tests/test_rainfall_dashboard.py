@@ -1,3 +1,21 @@
+"""Tests for the Rainfall Enhanced Model Streamlit dashboard.
+
+Module tested: ``src.rainfall_dashboard``
+
+Key scenarios:
+- ``load_metrics`` raises ``DashboardDataError`` when
+  ``reports/rainfall_enhanced_model_metrics.csv`` is absent or malformed.
+- ``load_model_metadata`` validates that all models listed in
+  ``EXPECTED_MODELS`` are present in the metadata store.
+- Metric columns (RMSE, MAE, R², WAPE) are present and numeric.
+- Date filtering and display helpers return correct subsets.
+
+BLOCKED: These tests require ``reports/rainfall_enhanced_model_metrics.csv``
+and the fitted artefacts under ``models/rainfall_enhanced/*.joblib``, which
+are not committed to the repository (pending IMD/CWC rainfall source data).
+All tests in this file are therefore expected to be skipped or fail until
+those artefacts are provided.
+"""
 import pandas as pd
 import pytest
 from datetime import date

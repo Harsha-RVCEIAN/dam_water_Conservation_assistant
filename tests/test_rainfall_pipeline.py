@@ -1,3 +1,18 @@
+"""Tests for the rainfall dataset build pipeline stage contracts.
+
+Module tested: ``src.data.build_rainfall_dataset``
+
+Key scenarios:
+- ``parse_candidate_dates`` expands a year/month specification into the full
+  set of daily candidate dates within that month.
+- ``build_daily_rainfall`` returns a DataFrame with the expected date index
+  and a ``rainfall_mm`` column; duplicates are dropped.
+- Pipeline is idempotent: running it twice on the same input yields the same
+  output without accumulating rows.
+- Missing source files are reported clearly rather than silently ignored.
+
+Coverage scope: pipeline stage contracts and date-parsing helpers only.
+"""
 import pandas as pd
 import pytest
 

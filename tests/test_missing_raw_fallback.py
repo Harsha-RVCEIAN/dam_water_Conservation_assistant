@@ -1,3 +1,17 @@
+"""Tests for graceful degradation when the raw dataset file is absent.
+
+Modules tested: ``src.data.preprocess``, ``src.data.validate``
+
+Key scenarios:
+- When the raw CSV is missing from disk the preprocessing pipeline does not
+  crash; it falls back to any cached processed data or raises a clear error.
+- The canonical column schema (``validate.CANONICAL_COLUMNS``) is still
+  respected in the fallback data path.
+- Downstream callers (e.g. the Streamlit app) remain functional when raw
+  data is unavailable.
+
+Coverage scope: missing-file error paths; does not test the happy-path ETL.
+"""
 import pandas as pd
 
 from src.data import preprocess, validate

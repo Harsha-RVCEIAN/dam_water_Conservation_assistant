@@ -1,3 +1,21 @@
+"""Tests for water availability assessment and alert logic.
+
+Module tested: ``src.models.water_availability``
+
+Key scenarios:
+- ``assess_water_alert`` returns the correct alert level (CRITICAL, LOW,
+  MODERATE, ADEQUATE, HIGH) across the full storage range (0 → MAX_LIVE_STORAGE_TMC).
+- Alert thresholds are monotonically ordered and physically consistent with
+  KRS Dam's design capacity.
+- ``WaterAvailabilityError`` is raised for negative storage, NaN input, or
+  storage exceeding the physical maximum.
+- Percentage-capacity calculation is correct and handles the edge case where
+  ``MAX_LIVE_STORAGE_TMC`` could appear as the denominator.
+- Date-aware seasonal modifiers are applied correctly (monsoon vs. dry season).
+
+Coverage scope: alert classification, error paths, and physical constants;
+does not test the full Streamlit rendering pipeline.
+"""
 from datetime import date
 
 import numpy as np

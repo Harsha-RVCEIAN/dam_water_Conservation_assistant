@@ -1,3 +1,18 @@
+"""Tests for the rainfall MLflow experiment-logging module.
+
+Module tested: ``src.models.log_rainfall_mlflow``
+
+Key scenarios:
+- Verifies that the seven expected MLflow run names are present and correctly ordered.
+- Checks that each run's saved metrics and parameters satisfy structural contracts.
+- Validates that the JSON artefact written per run is well-formed and complete.
+
+BLOCKED: These tests require ``reports/rainfall_enhanced_model_metrics.csv``
+and the fitted artefacts under ``models/rainfall_enhanced/*.joblib``, which
+are not committed to the repository (pending IMD/CWC rainfall source data).
+All tests in this file are therefore expected to be skipped or fail until
+those artefacts are provided.
+"""
 import json
 
 import pytest

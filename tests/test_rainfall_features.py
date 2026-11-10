@@ -1,3 +1,18 @@
+"""Tests for rainfall feature-engineering contracts.
+
+Module tested: ``src.data.rainfall_features``
+
+Key scenarios:
+- ``build_rainfall_features`` produces exactly the columns listed in
+  ``RAINFALL_FEATURE_COLUMNS`` (8 features).
+- Rolling and lag features are computed without data-leakage (future
+  observations do not influence past rows).
+- Edge cases: single-row frames, all-NaN rainfall input, zero rainfall.
+- Output dtype and index alignment match the input date index.
+
+Coverage scope: feature contract and anti-leakage invariants; does not
+exercise the full training pipeline.
+"""
 import pandas as pd
 import pytest
 
