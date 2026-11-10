@@ -25,6 +25,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from src.models.predict import InflowForecaster
+from src.services.api_client import get_api_base_url, get_inflow_forecast
 from src.models.conservation_assessment import (
     assess_reservoir_condition,
     detect_abnormal_flow_patterns,
@@ -173,13 +174,16 @@ def main() -> None:
             "Data source: Historical Archive &middot; Live telemetry: Not configured (research prototype)."
         )
 
-    # Initialize model forecast safely before tab rendering
+    # Initialize model forecast safely before tab rendering (FastAPI serving microservice with local fallback)
     forecast_res = None
-    if forecaster:
-        try:
-            forecast_res = forecaster.predict_latest_from_processed(PROCESSED_DATA_PATH)
-        except Exception:
-            forecast_res = None
+    try:
+        forecast_res = get_inflow_forecast(df, forecaster=forecaster)
+    except Exception:
+        if forecaster:
+            try:
+                forecast_res = forecaster.predict_latest_from_processed(PROCESSED_DATA_PATH)
+            except Exception:
+                forecast_res = None
 
     tabs = st.tabs([
         "📊 Reservoir Overview",
@@ -365,6 +369,19 @@ def main() -> None:
             # Domain boundary warnings
             for w in forecast_res.get("domain_warnings", []):
                 st.warning(f"⚠️ **Domain Notice:** {w}")
+
+            # Model inference source provenance
+            inference_source = forecast_res.get("inference_source", "Local Model Pipeline")
+            backend_url = forecast_res.get("backend_url", get_api_base_url())
+            if forecast_res.get("backend_connected"):
+                st.info(
+                    f"🌐 **Inference Source:** `{inference_source}` &middot; "
+                    f"Backend URL: `{backend_url}` &middot; Model: `{forecast_res.get('model_name')}` (v{forecast_res.get('model_version')}) &middot; "
+                    f"Status: **{forecast_res.get('quality_status')}** (Deployment Approved: `{forecast_res.get('deployment_approved')}`)"
+                )
+            else:
+                detail = forecast_res.get("backend_detail", f"Backend unreachable at {backend_url}")
+                st.caption(f"📁 **Inference Source:** `{inference_source}` &middot; {detail}")
 
             c_fc1, c_fc2, c_fc3, c_fc4 = st.columns(4)
             label_prefix = "[HISTORICAL]" if forecast_res["is_stale"] else "[PREDICTED]"
@@ -598,6 +615,16 @@ def main() -> None:
         st.write("- **DVC Remote:** None configured (local cache only; no remote credentials provided).")
         st.write("- **MLflow:** Tracking URI `file:./mlruns`, Experiment `dam_inflow_forecasting`.")
         st.write("- **Rainfall Pipeline:** `BLOCKED (EXTERNAL SOURCE ABSENT)` &middot; No external rainfall dataset or telemetry feed present in repository.")
+
+        st.markdown("---")
+        st.markdown("#### 4. Serving & Deployment Architecture (Two-Tier)")
+        st.write("- **Frontend Service:** Streamlit dashboard (`src/app.py`) listening on port `8501` (primary user-facing application).")
+        st.write(f"- **Backend Serving Service:** FastAPI inference service (`src/api/main.py`) listening on port `8000` (target URL: `{get_api_base_url()}`).")
+        backend_connected = bool(forecast_res.get("backend_connected", False)) if forecast_res else False
+        status_badge = "🟢 Connected & Ready" if backend_connected else "🟡 Standalone / Fallback Active"
+        st.write(f"- **Backend Connection Status:** {status_badge}")
+        if forecast_res and forecast_res.get("model_name"):
+            st.write(f"- **Serving Model:** `{forecast_res.get('model_name')}` (Version {forecast_res.get('model_version')}) &middot; Quality: **{forecast_res.get('quality_status')}** &middot; Approved for Production: `{forecast_res.get('deployment_approved')}`")
 
     # -------------------------------------------------------------
     # TAB 7: Water Conservation Assistant (Layer B)

@@ -305,11 +305,15 @@ The Tuned Random Forest model achieves an **11.23% reduction in RMSE** over the 
    - Mathematical prediction equivalence verified against direct MLflow predictions (`max_diff <= 1e-5` cusecs).
 6. **Automated Testing (pytest):**
    - 220+ unit, integration, schema, and API lifecycle tests covering preprocessing, feature engineering, water balance mass accounting, model quality, model registry, and FastAPI serving contracts.
-7. **Containerization & CI Pipeline (Phase 2 Steps 4 & 5):**
-   - **Docker Container:** Lightweight image (`python:3.11-slim`) exposing port 8000 with liveness health check, serving registered version 1 with physical non-negative flow constraints.
-   - **CI Workflow (`.github/workflows/ci-cd.yml`):** Runs on push to `harsha` / `main` and pull requests to `main`. Installs dependencies on Python 3.11, validates Python bytecode compilation (`compileall src`), executes the authoritative 59-test serving & registry test suite, and builds the Docker image (`krs-dam-api:ci`).
+7. **Containerization & CI Pipeline (Phase 2 Steps 4, 5 & 6):**
+   - **Two-Tier Docker Architecture:** Backend API image (`Dockerfile`, port 8000) and Frontend Streamlit dashboard image (`Dockerfile.streamlit`, port 8501), orchestrated via `docker-compose.yml` on a custom bridge network (`krs-network`).
+   - **CI Workflow (`.github/workflows/ci-cd.yml`):** Runs on push to `harsha` / `main` and pull requests to `main`. Installs dependencies on Python 3.11, validates Python bytecode compilation (`compileall src`), executes the 72-test serving, registry & integration test suite, validates `docker compose config`, and builds both Docker images (`krs-dam-api:ci` and `krs-dam-dashboard:ci`).
    - **Headless Store Provisioning:** Integrates `tests/conftest.py` with `src.models.provision_ci_registry` to dynamically populate the MLflow FileStore from tracked Git artifacts (`models/inflow_forecaster.joblib` and `models/model_metadata.json`), ensuring clean, reproducible CI runs without committing local `mlruns/` directories or exposing host secrets.
-   - **Deployment Boundary:** Passing CI builds the candidate container image but explicitly halts before release/deployment, keeping the advisory model's `CONDITIONAL` status and `deployment_approved=false` policy intact.
+   - **Deployment Boundary:** Passing CI builds the candidate container images but explicitly halts before release/deployment, keeping the advisory model's `CONDITIONAL` status and `deployment_approved=false` policy intact.
+8. **Full-Stack Integration (Phase 2 Step 6):**
+   - **Streamlit ↔ FastAPI Client:** `src/services/api_client.py` provides HTTP client functions (`check_backend_health`, `predict_inflow_via_api`, `get_inflow_forecast`) with resilient fallback to local model artifacts when the backend is offline.
+   - **Inference Source Provenance:** Tab 3 (Inflow Forecast) displays the active inference source (FastAPI backend or local fallback), backend URL, model version, quality status, and deployment approval flag.
+   - **Tab 6 Serving Architecture Panel:** Shows real-time backend connection status and two-tier architecture details.
 
 ---
 
@@ -332,9 +336,110 @@ Layer B adds a deterministic decision-support rule engine on top of Layer A's hy
 4. **Advisory Conservation Recommendations:** Produces prioritized, traceable recommendations (reviewing canal records, auditing stage-discharge curves, or checking telemetry) without prescribing gate operations or official allocation cuts.
 5. **Standardized Rationing Scenarios:** Compares hypothetical 5%, 10%, 15%, and 20% canal withdrawal reductions, calculating conserved volume ($TMC = \Delta flow \times 0.0000864 \times N$) and unclipped mathematical projections with boundary flags.
 
-### Launching the Assistant
+### Launching the Assistant Locally
+
+1. **Start the FastAPI Inference Backend:**
+   ```powershell
+   .\.venv\Scripts\uvicorn.exe src.api.main:app --host 127.0.0.1 --port 8000
+   ```
+2. **Start the Streamlit User Dashboard:**
+   ```powershell
+   .\.venv\Scripts\streamlit.exe run src/app.py --server.port=8501
+   ```
+3. Open `http://localhost:8501` in your browser. Open tab **"🛡️ Water Conservation Assistant"** to view real-time condition summaries, risk alerts, flow flags, and scenario comparisons.
+
+---
+
+## 8. Two-Tier Full-Stack Deployment Architecture
+
+The application is deployed using a decoupled, multi-container microservice architecture composed of a user-facing presentation frontend and an internal model-serving backend:
+
+```text
+┌────────────────────────────────────────────────────────────────────────┐
+│                        User Browser                                    │
+└──────────────────────────────────┬─────────────────────────────────────┘
+                                   │ HTTP :8501
+                                   ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                  krs-dam-dashboard (Streamlit Frontend)                │
+│  - Container port: 8501                                                │
+│  - Entrypoint: streamlit run src/app.py                                │
+│  - Seven interactive tabs (Overview, Trends, Forecast, Scenarios, etc) │
+│  - Resilient API client with automatic local model fallback            │
+└──────────────────────────────────┬─────────────────────────────────────┘
+                                   │ Internal HTTP :8000
+                                   │ (krs-network / API_BASE_URL)
+                                   ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                     krs-dam-api (FastAPI Backend)                      │
+│  - Container port: 8000                                                │
+│  - Entrypoint: uvicorn src.api.main:app --port 8000                    │
+│  - Loads MLflow registered model KRS_Dam_Inflow_Forecaster (v1)        │
+│  - Probes: GET /health, GET /ready, GET /model-info, POST /predict     │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+### Service Architecture
+
+| Service | Component | Container Name | Port | Description |
+|---|---|---|---|---|
+| **Frontend** | Streamlit (`src/app.py`) | `krs-dam-dashboard` | `8501` | Public user interface with interactive tabs, plots, scenarios, and health indicators. |
+| **Backend** | FastAPI (`src/api/main.py`) | `krs-dam-api` | `8000` | Model inference microservice serving MLflow Version 1 with Pydantic validation. |
+
+### Docker Compose Multi-Container Orchestration
+
+Both services are orchestrated using `docker-compose.yml` connected via a custom bridge network (`krs-network`):
+
+- **Service Dependency:** The dashboard service specifies `depends_on: { api: { condition: service_healthy } }` so the frontend only starts once the backend passes readiness checks.
+- **Resilient Fallback:** If the backend is stopped or unreachable, the Streamlit frontend gracefully falls back to local artifact prediction (`models/inflow_forecaster.joblib`), ensuring zero user-facing downtime.
+
+#### Multi-Container Commands
 
 ```powershell
-.\.venv\Scripts\python.exe -m streamlit run src/app.py
+# Build both container images and launch services in background
+docker compose up -d --build
+
+# Check container status and health probes
+docker compose ps
+
+# View unified or service-specific logs
+docker compose logs -f dashboard
+docker compose logs -f api
+
+# Stop and clean up containers and bridge network
+docker compose down
 ```
-Open tab **"🛡️ Water Conservation Assistant"** to view real-time condition summaries, risk alerts, flow flags, and scenario comparisons.
+
+### Access URLs & Endpoints
+
+| Resource | Target URL | Description |
+|---|---|---|
+| **Streamlit Dashboard** | `http://localhost:8501` | Primary public user interface |
+| **API Documentation** | `http://localhost:8000/docs` | Interactive Swagger UI for model API |
+| **API Readiness Probe** | `http://localhost:8000/ready` | Readiness check (validates MLflow model state) |
+| **API Liveness Probe** | `http://localhost:8000/health` | Process liveness probe |
+| **Model Metadata** | `http://localhost:8000/model-info` | Model provenance, features, and quality status |
+| **Prediction Endpoint** | `POST http://localhost:8000/predict` | 19-feature JSON inference endpoint |
+
+### Environment Variables
+
+| Variable | Default | Service | Description |
+|---|---|---|---|
+| `API_BASE_URL` | `http://localhost:8000` | `dashboard` | Base URL used by Streamlit client (`http://api:8000` in compose). |
+| `PORT` | `8501` (frontend) / `8000` (api) | Both | Port binding inside container. |
+| `MLFLOW_TRACKING_URI` | `file:/app/mlruns` | `api` | Filesystem URI for MLflow experiment and registry stores. |
+
+### Troubleshooting & Logs
+
+- **Inspect Backend Logs:**
+  ```powershell
+  docker logs krs-dam-api
+  ```
+- **Inspect Dashboard Logs:**
+  ```powershell
+  docker logs krs-dam-dashboard
+  ```
+- **Verify Backend Inside Network:**
+  ```powershell
+  docker exec krs-dam-dashboard python -c "import urllib.request; print(urllib.request.urlopen('http://api:8000/ready').read().decode())"
+  ```

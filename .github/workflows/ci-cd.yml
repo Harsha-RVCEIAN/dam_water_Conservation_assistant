@@ -33,9 +33,11 @@ jobs:
             --junitxml=test-results.xml \
             tests/test_api_schemas.py \
             tests/test_api.py \
+            tests/test_api_client.py \
             tests/test_model_registry.py \
             tests/test_forecasting.py \
-            tests/test_model_artifact_provenance.py
+            tests/test_model_artifact_provenance.py \
+            tests/test_app_smoke.py
 
       - name: Upload test results
         if: always()
@@ -45,6 +47,11 @@ jobs:
           path: test-results.xml
           if-no-files-found: warn
 
-      - name: Build Docker image
+      - name: Validate Docker Compose configuration
+        run: docker compose config
+
+      - name: Build Backend Docker image
         run: docker build -t krs-dam-api:ci .
 
+      - name: Build Frontend Streamlit Docker image
+        run: docker build -f Dockerfile.streamlit -t krs-dam-dashboard:ci .
