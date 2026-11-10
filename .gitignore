@@ -20,6 +20,9 @@ htmlcov/
 mlruns/
 mlruns_rainfall_enhanced/
 .trash/
+mlflow.db
+*.db
+.cache/
 
 # Environment variables & secrets
 .env
