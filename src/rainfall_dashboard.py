@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import json
+import sys
 from datetime import date
 from pathlib import Path
 from typing import Any
+
+# Ensure project root is in sys.path when running via streamlit run
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import numpy as np
 import pandas as pd

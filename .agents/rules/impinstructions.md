@@ -18,3 +18,4 @@ trigger: always_on
 12. Do not automatically commit changes. Report the changed files and let the user review before committing.
 13. If a change could cause data loss, expose credentials, affect files outside the project, or alter system security, stop and ask for approval.
 14. Keep responses concise: report changes, tests, failures, and the next action in at most five bullets.
+15. dont commit or push without permission
