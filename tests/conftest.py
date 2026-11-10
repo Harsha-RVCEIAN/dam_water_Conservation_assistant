@@ -24,3 +24,4 @@ def setup_test_environment() -> None:
             logger.info("Auto-provisioned MLflow Model Registry for test session.")
     except Exception as exc:
         logger.warning("Could not auto-provision MLflow Model Registry: %s", exc)
+

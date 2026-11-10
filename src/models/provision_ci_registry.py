@@ -147,3 +147,4 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     provisioned = ensure_ci_registry_provisioned()
     print(f"MLflow store status: {'Provisioned' if provisioned else 'Already present'}")
+
