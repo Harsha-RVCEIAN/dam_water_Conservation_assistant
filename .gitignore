@@ -15,6 +15,7 @@ __pycache__/
 .coverage
 .coverage.*
 htmlcov/
+test-results.xml
 
 # MLflow tracking local artifacts and database
 mlruns/

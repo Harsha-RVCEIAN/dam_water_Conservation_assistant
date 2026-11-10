@@ -30,11 +30,20 @@ jobs:
       - name: Run focused tests
         run: |
           pytest -q \
+            --junitxml=test-results.xml \
             tests/test_api_schemas.py \
             tests/test_api.py \
             tests/test_model_registry.py \
             tests/test_forecasting.py \
             tests/test_model_artifact_provenance.py
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-results
+          path: test-results.xml
+          if-no-files-found: warn
 
       - name: Build Docker image
         run: docker build -t krs-dam-api:ci .

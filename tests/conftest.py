@@ -17,11 +17,19 @@ logger = logging.getLogger("krs_dam.tests.conftest")
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_environment() -> None:
-    """Session-level fixture ensuring MLflow Model Registry is provisioned if absent."""
+    """Session-level fixture ensuring MLflow Model Registry is provisioned if absent.
+
+    Fails explicitly with RuntimeError if provisioning cannot be completed,
+    preventing silent downstream test failure cascades.
+    """
     try:
         provisioned = ensure_ci_registry_provisioned()
         if provisioned:
             logger.info("Auto-provisioned MLflow Model Registry for test session.")
     except Exception as exc:
-        logger.warning("Could not auto-provision MLflow Model Registry: %s", exc)
+        logger.error("Failed to provision MLflow Model Registry: %s", exc)
+        raise RuntimeError(
+            f"Test session environment setup failed: could not provision MLflow Model Registry. "
+            f"Error details: {exc}"
+        ) from exc
 
