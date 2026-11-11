@@ -34,7 +34,9 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
+          # Application dependencies (including FastAPI and Uvicorn declared in requirements.txt)
           pip install -r requirements.txt
+          # CI and test dependencies
           pip install pytest pytest-cov flake8 httpx
 
       - name: Lint & Code Style Check
@@ -61,19 +63,76 @@ jobs:
       - name: Verify Quality Gate Verdict
         run: |
           python -c "
-          import json
-          with open('reports/quality_gate_report.json') as f:
-              report = json.load(f)
-          assert report['status'] == 'PASSED', f'Quality gate failed: {report}'
-          print('Quality gate passed successfully in CI/CD pipeline.')
+          import json, sys
+          from pathlib import Path
+
+          live_ci_path = Path('reports/quality_gate_live_ci.json')
+          ci_availability_path = Path('reports/quality_gate_ci_availability.json')
+          benchmark_path = Path('reports/quality_gate_report.json')
+
+          # Priority 1: Real live model evaluation was executed on actual DVC artifacts
+          if live_ci_path.exists():
+              with open(live_ci_path) as f:
+                  live_report = json.load(f)
+
+              assert live_report.get('live_evaluation_executed') is True, 'Invalid live report: live_evaluation_executed is not True'
+              assert live_report.get('status') == 'PASSED', f\"Live model quality gate FAILED: status={live_report.get('status')}\"
+
+              gates = live_report.get('gate_checks', {})
+              for gate_name, gate_info in gates.items():
+                  assert gate_info.get('passed') is True, f\"Live gate check '{gate_name}' failed: {gate_info}\"
+
+              metrics = live_report.get('metrics', {})
+              print('======================================================================')
+              print('GENUINE LIVE MODEL QUALITY GATE PASSED ON REAL ARTIFACTS')
+              print('======================================================================')
+              print(f\"Model Name         : {live_report.get('model_name')}\")
+              print(f\"Evaluated At (UTC) : {live_report.get('evaluated_at_utc')}\")
+              print(f\"RMSE Improvement   : {metrics.get('rmse_improvement_pct')}% (Gate >= 20.0%)\")
+              print(f\"Test R2 Score      : {metrics.get('r2_score')} (Gate >= 0.65)\")
+              print(f\"Conventional WAPE  : {metrics.get('conventional_wape_pct')}% (Gate <= 40.0%)\")
+              print('Verified from live execution report: reports/quality_gate_live_ci.json')
+
+          # Priority 2: Live evaluation skipped due to missing DVC artifacts in headless CI
+          elif ci_availability_path.exists():
+              with open(ci_availability_path) as f:
+                  ci_report = json.load(f)
+              with open(benchmark_path) as f:
+                  benchmark = json.load(f)
+
+              assert ci_report.get('live_evaluation_executed') is False, 'Invalid availability report'
+              assert ci_report.get('committed_benchmark_validated') is True, 'Benchmark validation failed'
+              assert benchmark.get('status') == 'PASSED', f\"Benchmark report status must be PASSED, got: {benchmark.get('status')}\"
+
+              print('::warning::LIVE MODEL QUALITY GATE SKIPPED: DVC artifacts unavailable in headless CI.')
+              print('======================================================================')
+              print('LIVE EVALUATION SKIPPED (DVC REMOTE NOT CONFIGURED)')
+              print('======================================================================')
+              print(f\"Reason              : {ci_report.get('reason')}\")
+              print(f\"Missing Artifacts   : {ci_report.get('missing_artifacts')}\")
+              print(f\"Validated Benchmark : {benchmark.get('model_name')}\")
+              print(f\"Benchmark Timestamp : {benchmark.get('evaluated_at_utc')}\")
+              print(f\"Benchmark Metrics   : RMSE={benchmark['metrics']['rmse_cfs']} cfs, R2={benchmark['metrics']['r2_score']}, WAPE={benchmark['metrics']['conventional_wape_pct']}%\")
+              print('Live model quality gate was NOT executed in this CI run (code & contract checks only).')
+              print('Committed benchmark baseline was independently validated against all thresholds.')
+
+          # Priority 3: Neither report was generated - evaluation failed to produce a valid report
+          else:
+              print('[FATAL] Neither live evaluation report (reports/quality_gate_live_ci.json) nor CI availability report (reports/quality_gate_ci_availability.json) was found!')
+              print('The quality gate evaluation step did not complete successfully.')
+              sys.exit(1)
           "
 
       - name: Upload Quality Gate Report Artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: quality-gate-report
-          path: reports/quality_gate_report.json
+          name: quality-gate-reports
+          path: |
+            reports/quality_gate_report.json
+            reports/quality_gate_live_ci.json
+            reports/quality_gate_ci_availability.json
+          if-no-files-found: ignore
           retention-days: 14
 
   docker-dry-run:

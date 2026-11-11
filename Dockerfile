@@ -21,7 +21,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application source and assets
 COPY src/ /app/src/
-COPY config/ /app/config/
 COPY models/ /app/models/
 COPY data/interim/selected_rainfall_stations.csv /app/data/interim/selected_rainfall_stations.csv
 COPY data/processed/krs_dam_processed.csv /app/data/processed/krs_dam_processed.csv

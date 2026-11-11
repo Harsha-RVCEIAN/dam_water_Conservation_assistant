@@ -35,6 +35,8 @@ from src.models import train_rainfall
 MODEL_PATH = PROJECT_ROOT / "models/rainfall_enhanced/rainfall_tuned_random_forest_v1.joblib"
 METADATA_PATH = PROJECT_ROOT / "models/rainfall_enhanced/rainfall_tuned_random_forest_v1.json"
 REPORT_OUTPUT_PATH = PROJECT_ROOT / "reports/quality_gate_report.json"
+CI_AVAILABILITY_REPORT_PATH = PROJECT_ROOT / "reports/quality_gate_ci_availability.json"
+LIVE_CI_REPORT_PATH = PROJECT_ROOT / "reports/quality_gate_live_ci.json"
 
 # Quality Gate Thresholds (calibrated from verified 2025 out-of-sample benchmark)
 MIN_RMSE_IMPROVEMENT_PCT = 20.0  # Model achieves 31.09% (11.09% safety margin)
@@ -82,7 +84,10 @@ def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
     }
 
 
-def evaluate_model_quality_gate() -> QualityGateResult:
+def evaluate_model_quality_gate(
+    save_report: bool = False,
+    save_live_ci_report: bool = False,
+) -> QualityGateResult:
     """Run full automated quality gate evaluation for the 27-feature model."""
     if not MODEL_PATH.exists():
         raise FileNotFoundError(f"Trained model artifact not found: {MODEL_PATH}")
@@ -189,17 +194,202 @@ def evaluate_model_quality_gate() -> QualityGateResult:
         },
     )
 
-    # Save validation report
-    REPORT_OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    REPORT_OUTPUT_PATH.write_text(json.dumps(asdict(result), indent=2), encoding="utf-8")
+    # Save committed benchmark report only when explicitly requested
+    if save_report:
+        REPORT_OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        REPORT_OUTPUT_PATH.write_text(json.dumps(asdict(result), indent=2), encoding="utf-8")
+
+    # Save live CI execution report when real model evaluation executes
+    if save_live_ci_report:
+        live_ci_data = asdict(result)
+        live_ci_data["live_evaluation_executed"] = True
+        LIVE_CI_REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        LIVE_CI_REPORT_PATH.write_text(json.dumps(live_ci_data, indent=2), encoding="utf-8")
+
     return result
+
+
+def check_artifacts_available() -> tuple[bool, list[str]]:
+    """Verify presence of local model and dataset artifacts required for live evaluation."""
+    missing = []
+    if not MODEL_PATH.exists():
+        missing.append(f"Model artifact: {MODEL_PATH}")
+    if not METADATA_PATH.exists():
+        missing.append(f"Model metadata: {METADATA_PATH}")
+    merged_path = PROJECT_ROOT / "data/interim/krs_dam_rainfall_merged.csv"
+    if not merged_path.exists():
+        missing.append(f"Merged dataset: {merged_path}")
+    return len(missing) == 0, missing
+
+
+def validate_benchmark_report(report_path: Path) -> dict[str, Any]:
+    """Validate that the committed benchmark quality gate report is uncorrupted, complete, and passes all gates.
+
+    Raises ValueError or FileNotFoundError if any check fails.
+    """
+    if not report_path.exists():
+        raise FileNotFoundError(f"Committed benchmark report not found: {report_path}")
+
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(f"Benchmark report is not valid JSON: {exc}") from exc
+
+    # Status must be PASSED
+    status = report.get("status")
+    if status != "PASSED":
+        raise ValueError(f"Benchmark report status is '{status}', expected 'PASSED'")
+
+    # Model and feature metadata
+    model_name = report.get("model_name")
+    if model_name != "Tuned Random Forest (Rainfall-Enhanced)":
+        raise ValueError(f"Unexpected model_name in benchmark: '{model_name}'")
+
+    feature_count = report.get("feature_count")
+    if feature_count != 27:
+        raise ValueError(f"Unexpected feature_count in benchmark: {feature_count}, expected 27")
+
+    # Metrics validation
+    metrics = report.get("metrics")
+    if not isinstance(metrics, dict):
+        raise ValueError("Benchmark report missing 'metrics' dictionary")
+
+    required_metric_keys = [
+        "mae_cfs", "rmse_cfs", "r2_score", "conventional_wape_pct",
+        "baseline_persistence_rmse_cfs", "baseline_persistence_wape_pct", "rmse_improvement_pct"
+    ]
+    for key in required_metric_keys:
+        val = metrics.get(key)
+        if val is None or not isinstance(val, (int, float)) or not np.isfinite(val):
+            raise ValueError(f"Metric '{key}' missing or not a finite number: {val}")
+
+    # Threshold checks
+    rmse_imp = metrics["rmse_improvement_pct"]
+    if rmse_imp < MIN_RMSE_IMPROVEMENT_PCT:
+        raise ValueError(f"Benchmark RMSE improvement {rmse_imp}% fails threshold >= {MIN_RMSE_IMPROVEMENT_PCT}%")
+
+    r2 = metrics["r2_score"]
+    if r2 < MIN_TEST_R2:
+        raise ValueError(f"Benchmark R2 score {r2} fails threshold >= {MIN_TEST_R2}")
+
+    wape = metrics["conventional_wape_pct"]
+    if wape > MAX_TEST_WAPE_PCT:
+        raise ValueError(f"Benchmark conventional WAPE {wape}% fails threshold <= {MAX_TEST_WAPE_PCT}%")
+
+    # Gate checks dictionary
+    gates = report.get("gate_checks")
+    if not isinstance(gates, dict) or not all(k in gates for k in ("rmse_improvement", "r2_score", "conventional_wape")):
+        raise ValueError("Benchmark report 'gate_checks' incomplete or malformed")
+
+    for gate_name, gate_info in gates.items():
+        if not gate_info.get("passed", False):
+            raise ValueError(f"Benchmark gate check '{gate_name}' is not marked as passed")
+
+    # Domain checks
+    domain = report.get("domain_checks")
+    if not isinstance(domain, dict) or not domain.get("non_negative_predictions") or not domain.get("no_nan_predictions"):
+        raise ValueError("Benchmark domain checks incomplete or failed")
+
+    # Imputer checks
+    imputer = report.get("imputer_checks")
+    if not isinstance(imputer, dict) or not imputer.get("imputer_present") or not imputer.get("imputer_has_all_27_feature_medians"):
+        raise ValueError("Benchmark imputer checks incomplete or failed")
+
+    return report
 
 
 def main() -> None:
     print("=" * 70)
     print("KRS Dam Water Conservation Assistant: Model Quality Gate Validation")
     print("=" * 70)
-    result = evaluate_model_quality_gate()
+
+    is_available, missing = check_artifacts_available()
+    if not is_available:
+        # Clean up any stale live CI report if live artifacts are missing
+        if LIVE_CI_REPORT_PATH.exists():
+            try:
+                LIVE_CI_REPORT_PATH.unlink()
+            except OSError as exc:
+                print(f"[FATAL] Failed to delete stale live CI report '{LIVE_CI_REPORT_PATH}': {exc}")
+                raise SystemExit(1)
+
+        print("[QUALITY GATE NOTICE: LIVE MODEL EVALUATION SKIPPED]")
+        print("Live out-of-sample statistical gate re-evaluation requires local DVC artifacts.")
+        print("Missing artifacts in current environment:")
+        for item in missing:
+            print(f"  - {item}")
+        print("-" * 70)
+
+        # Validate the committed benchmark audit report rigorously
+        try:
+            committed_report = validate_benchmark_report(REPORT_OUTPUT_PATH)
+        except Exception as exc:
+            print(f"[FATAL] Committed benchmark report validation failed: {exc}")
+            raise SystemExit(1)
+
+        print("Committed Benchmark Report Verification (Passed All Checks):")
+        print(f"  - Model Name        : {committed_report['model_name']}")
+        print(f"  - Features          : {committed_report['feature_count']} features (19 dam + 8 rainfall)")
+        print(f"  - Evaluation Window : {committed_report['test_date_range']} (N = {committed_report['test_sample_count']})")
+        metrics = committed_report["metrics"]
+        print(f"  - RMSE (Model)      : {metrics['rmse_cfs']:,} cfs")
+        print(f"  - RMSE (Baseline)   : {metrics['baseline_persistence_rmse_cfs']:,} cfs")
+        print(f"  - RMSE Improvement  : {metrics['rmse_improvement_pct']}% (Gate: >= {MIN_RMSE_IMPROVEMENT_PCT}%) [PASS]")
+        print(f"  - R^2 Score         : {metrics['r2_score']} (Gate: >= {MIN_TEST_R2}) [PASS]")
+        print(f"  - Conventional WAPE : {metrics['conventional_wape_pct']}% (Gate: <= {MAX_TEST_WAPE_PCT}%) [PASS]")
+        print(f"  - Evaluated At UTC  : {committed_report['evaluated_at_utc']}")
+        print("-" * 70)
+
+        # Write separate CI availability report (preserving reports/quality_gate_report.json untouched)
+        ci_report = {
+            "live_evaluation_executed": False,
+            "live_evaluation_status": "SKIPPED_ARTIFACTS_UNAVAILABLE",
+            "reason": (
+                "Live out-of-sample quality gate evaluation requires local DVC artifacts "
+                "(model binary and merged rainfall dataset), which are not present in this headless CI environment."
+            ),
+            "missing_artifacts": missing,
+            "committed_benchmark_validated": True,
+            "validated_benchmark_file": str(REPORT_OUTPUT_PATH.relative_to(PROJECT_ROOT)),
+            "validated_benchmark_summary": {
+                "evaluated_at_utc": committed_report["evaluated_at_utc"],
+                "model_name": committed_report["model_name"],
+                "feature_count": committed_report["feature_count"],
+                "test_date_range": committed_report["test_date_range"],
+                "rmse_improvement_pct": metrics["rmse_improvement_pct"],
+                "r2_score": metrics["r2_score"],
+                "conventional_wape_pct": metrics["conventional_wape_pct"],
+            },
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        }
+        CI_AVAILABILITY_REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        CI_AVAILABILITY_REPORT_PATH.write_text(json.dumps(ci_report, indent=2), encoding="utf-8")
+
+        print("STATUS: Live evaluation was SKIPPED (artifacts not present).")
+        print("STATUS: Committed benchmark baseline was STRICTLY VALIDATED against all thresholds.")
+        print(f"CI availability report saved to: {CI_AVAILABILITY_REPORT_PATH}")
+        print("Note: Original benchmark report 'reports/quality_gate_report.json' was preserved untouched.")
+        print("=" * 70)
+        return
+
+    # Clean up any stale CI availability report if live evaluation is running
+    if CI_AVAILABILITY_REPORT_PATH.exists():
+        try:
+            CI_AVAILABILITY_REPORT_PATH.unlink()
+        except OSError as exc:
+            print(f"[FATAL] Failed to delete stale CI availability report '{CI_AVAILABILITY_REPORT_PATH}': {exc}")
+            raise SystemExit(1)
+
+    # Immediately before live evaluation: delete any existing live CI report to prevent stale acceptance
+    if LIVE_CI_REPORT_PATH.exists():
+        try:
+            LIVE_CI_REPORT_PATH.unlink()
+        except OSError as exc:
+            print(f"[FATAL] Failed to delete stale live CI report '{LIVE_CI_REPORT_PATH}': {exc}")
+            raise SystemExit(1)
+
+    save_report = "--save-report" in sys.argv or "--save" in sys.argv
+    result = evaluate_model_quality_gate(save_report=save_report, save_live_ci_report=True)
     print(f"Model Name        : {result.model_name}")
     print(f"Features          : {result.feature_count} features (19 dam + 8 rainfall)")
     print(f"Evaluation Window : {result.test_date_range} (N = {result.test_sample_count})")
@@ -215,7 +405,11 @@ def main() -> None:
         print(f"  {status_symbol} {gate_name}: Actual {gate_info['actual']} vs Threshold {gate_info['threshold']}")
     print("-" * 70)
     print(f"FINAL QUALITY GATE VERDICT: {result.status}")
-    print(f"Report saved to: {REPORT_OUTPUT_PATH}")
+    print(f"Live evaluation report saved to: {LIVE_CI_REPORT_PATH}")
+    if save_report:
+        print(f"Committed benchmark report updated at: {REPORT_OUTPUT_PATH}")
+    else:
+        print(f"Committed benchmark report preserved untouched at: {REPORT_OUTPUT_PATH}")
     print("=" * 70)
     if result.status != "PASSED":
         raise SystemExit(1)

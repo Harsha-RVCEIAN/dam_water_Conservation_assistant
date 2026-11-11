@@ -12,6 +12,14 @@ if str(PROJECT_ROOT) not in sys.path:
 # Silence loky core count detection warning in constrained environments
 os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
 
+# On Windows, use SelectorEventLoop to prevent socketpair deadlocks in constrained environments
+if sys.platform == "win32":
+    import asyncio
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    except Exception:
+        pass
+
 # Patch streamlit AppTest.from_file so that repo-root relative paths resolve correctly
 try:
     from streamlit.testing.v1.app_test import AppTest

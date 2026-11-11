@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+import numpy as np
+import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
@@ -14,12 +16,51 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.api.main import app, app_state
 from src.models.registry import load_production_model
 
+MODEL_PATH = PROJECT_ROOT / "models/rainfall_enhanced/rainfall_tuned_random_forest_v1.joblib"
+DATASET_PATH = PROJECT_ROOT / "data/interim/krs_dam_rainfall_merged.csv"
+
+
+class MockPipeline:
+    """Mock model pipeline for isolated API contract testing when real artifact is unavailable."""
+
+    def __init__(self):
+        self.named_steps = {
+            "imputer": type("MockImputer", (), {"statistics_": np.zeros(27)})()
+        }
+
+    def predict(self, df: pd.DataFrame) -> np.ndarray:
+        preds = []
+        for _, row in df.iterrows():
+            base = row.get("inflow_lag_1", 3500.0)
+            if pd.isna(base):
+                base = 3500.0
+            rain = row.get("rainfall_mm_lag_1", 0.0)
+            if pd.notna(rain):
+                base += float(rain) * 10.0
+            preds.append(max(float(base), 0.0))
+        return np.array(preds, dtype=float)
+
 
 @pytest.fixture(scope="module")
 def client():
-    """Create a TestClient with the loaded model in app_state."""
+    """Create a TestClient with model loaded in app_state (real model if present, mock fallback for CI)."""
+    orig_model = app_state.get("model")
+    orig_info = app_state.get("model_info")
+
     with TestClient(app) as test_client:
-        yield test_client
+        if app_state.get("model") is None:
+            app_state["model"] = MockPipeline()
+            app_state["model_info"] = {
+                "model_name": "Tuned Random Forest (Rainfall-Enhanced)",
+                "source": "test_fixture_mock",
+                "version": "1.0 (champion)",
+            }
+        try:
+            yield test_client
+        finally:
+            if orig_model is None:
+                app_state["model"] = None
+                app_state["model_info"] = orig_info or {}
 
 
 @pytest.fixture
@@ -115,6 +156,10 @@ def test_predict_batch_endpoint(client: TestClient, sample_27_features: dict):
     assert data["predictions"][0]["predicted_inflow_cusecs"] >= 0.0
 
 
+@pytest.mark.skipif(
+    not DATASET_PATH.exists(),
+    reason="Requires historical merged dataset krs_dam_rainfall_merged.csv",
+)
 def test_predict_latest_endpoint(client: TestClient):
     """Test GET /predict/latest runs against historical merged data."""
     response = client.get("/predict/latest")

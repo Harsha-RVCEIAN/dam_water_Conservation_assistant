@@ -1,0 +1,54 @@
+{
+  "status": "PASSED",
+  "evaluated_at_utc": "2026-11-11T02:41:15.202221+00:00",
+  "model_name": "Tuned Random Forest (Rainfall-Enhanced)",
+  "feature_count": 27,
+  "test_sample_count": 365,
+  "test_date_range": "2025-01-01 to 2025-12-31",
+  "metrics": {
+    "mae_cfs": 2601.25,
+    "rmse_cfs": 5934.02,
+    "r2_score": 0.7238,
+    "conventional_wape_pct": 34.03,
+    "harshad_reference_wape_pct": 38.5,
+    "mean_actual_inflow_cusecs": 7644.19,
+    "baseline_persistence_rmse_cfs": 8611.8,
+    "baseline_persistence_wape_pct": 43.49,
+    "rmse_improvement_pct": 31.09
+  },
+  "gate_checks": {
+    "rmse_improvement": {
+      "threshold": ">= 20.0%",
+      "actual": "31.09%",
+      "passed": true,
+      "rationale": "Model must outperform persistence baseline by >= 20% to justify operational deployment."
+    },
+    "r2_score": {
+      "threshold": ">= 0.65",
+      "actual": "0.7238",
+      "passed": true,
+      "rationale": "Model must explain >= 65% of inflow variance (baseline explains 41.83%)."
+    },
+    "conventional_wape": {
+      "threshold": "<= 40.0%",
+      "actual": "34.03%",
+      "passed": true,
+      "rationale": "Conventional test-set WAPE must remain under 40% (baseline is 43.49%)."
+    }
+  },
+  "domain_checks": {
+    "non_negative_predictions": true,
+    "no_nan_predictions": true,
+    "reservoir_frl_boundary_checked": true
+  },
+  "imputer_checks": {
+    "imputer_present": true,
+    "imputer_has_all_27_feature_medians": true,
+    "rainfall_features_have_finite_imputation_values": true
+  },
+  "documentation_notes": {
+    "wape_distinction": "Conventional WAPE is 34.03% (MAE 2601.25 / mean actual 7644.19 cfs). Harshad's paired comparison CSV reported 38.50% using a fixed reference denominator of 6756.49 cfs. Both formulations demonstrate clear superiority over the persistence baseline.",
+    "imputation_policy": "When catchment rainfall telemetry is unavailable, missing features are imputed with training medians, and the API issues an explicit DEGRADED telemetry advisory to dam operators."
+  },
+  "live_evaluation_executed": true
+}
